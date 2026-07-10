@@ -1,7 +1,6 @@
 package com.ljarocki.shadedjar;
 
 import org.gradle.api.DefaultTask;
-import org.gradle.api.GradleException;
 import org.gradle.api.file.ConfigurableFileCollection;
 import org.gradle.api.file.RegularFileProperty;
 import org.gradle.api.provider.MapProperty;
@@ -17,6 +16,7 @@ import org.gradle.workers.WorkerExecutor;
 
 import javax.inject.Inject;
 import java.io.BufferedOutputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.EOFException;
 import java.io.File;
@@ -301,7 +301,7 @@ public abstract class FatJarTask extends DefaultTask {
                 attrs.put(new Attributes.Name(e.getKey()), e.getValue());
             }
         }
-        java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
         manifest.write(bos);
         return bos.toByteArray();
     }
@@ -328,70 +328,105 @@ public abstract class FatJarTask extends DefaultTask {
                 crc.getValue(), data.length, data.length, entryOffset));
     }
 
+    /**
+     * Writes a local file header, promoting to a Zip64 extra field (and
+     * sentinel {@code 0xFFFFFFFF} size fields) when {@code compSize} or
+     * {@code rawSize} doesn't fit in 32 bits. See {@link Zip64Support}.
+     */
     private long writeLocalHeader(OutputStream os, byte[] nameBytes, int method,
                                   long crc, long compSize, long rawSize) throws IOException {
-        ByteBuffer b = ByteBuffer.allocate(30 + nameBytes.length).order(ByteOrder.LITTLE_ENDIAN);
+        boolean zip64 = Zip64Support.needsZip64(compSize, rawSize);
+        byte[] extra = zip64 ? Zip64Support.localExtra(rawSize, compSize) : Zip64Support.NO_EXTRA;
+        ByteBuffer b = ByteBuffer.allocate(30 + nameBytes.length + extra.length).order(ByteOrder.LITTLE_ENDIAN);
         b.putInt(PartFormat.LFH_SIG);
-        b.putShort((short) 20);
+        b.putShort((short) (zip64 ? 45 : 20));
         b.putShort((short) PartFormat.FLAG_UTF8);
         b.putShort((short) method);
         b.putShort((short) PartFormat.DOS_TIME);
         b.putShort((short) PartFormat.DOS_DATE);
         b.putInt((int) crc);
-        b.putInt((int) compSize);
-        b.putInt((int) rawSize);
+        b.putInt(zip64 ? 0xFFFFFFFF : (int) compSize);
+        b.putInt(zip64 ? 0xFFFFFFFF : (int) rawSize);
         b.putShort((short) nameBytes.length);
-        b.putShort((short) 0);
+        b.putShort((short) extra.length);
         b.put(nameBytes);
+        b.put(extra);
         os.write(b.array());
         return b.array().length;
     }
 
+    /**
+     * Builds the central directory plus EOCD, promoting to a Zip64 End Of
+     * Central Directory record + locator (preceding the classic EOCD, whose
+     * count/size/offset fields are then all sentineled together) when there
+     * are more than 65,534 entries, or the central directory's own size or
+     * starting offset doesn't fit in 32 bits. See {@link Zip64Support}.
+     */
     private byte[] buildCentralDirectory(List<CdEntry> central, long cdOffset) {
-        if (central.size() > 0xFFFF) {
-            throw new GradleException("shaded-jar: " + central.size() + " entries exceeds the "
-                    + "65535-entry ZIP limit; Zip64 is not supported yet (planned for a later phase).");
-        }
-        int size = 0;
-        for (CdEntry e : central) size += 46 + e.name.length;
-        if (cdOffset > 0xFFFFFFFFL || (long) size + cdOffset > 0xFFFFFFFFL) {
-            throw new GradleException("shaded-jar: archive exceeds 4 GiB; Zip64 is not supported "
-                    + "yet (planned for a later phase).");
-        }
-        ByteBuffer b = ByteBuffer.allocate(size + 22).order(ByteOrder.LITTLE_ENDIAN);
+        ByteArrayOutputStream cdBody = new ByteArrayOutputStream(central.size() * 64);
         for (CdEntry e : central) {
-            b.putInt(PartFormat.CDH_SIG);
-            b.putShort((short) 20);
-            b.putShort((short) 20);
-            b.putShort((short) PartFormat.FLAG_UTF8);
-            b.putShort((short) e.method);
-            b.putShort((short) PartFormat.DOS_TIME);
-            b.putShort((short) PartFormat.DOS_DATE);
-            b.putInt((int) e.crc);
-            b.putInt((int) e.compSize);
-            b.putInt((int) e.rawSize);
-            b.putShort((short) e.name.length);
-            b.putShort((short) 0);
-            b.putShort((short) 0);
-            b.putShort((short) 0);
-            b.putShort((short) 0);
-            b.putInt(0);
-            b.putInt((int) e.offset);
-            b.put(e.name);
+            writeCentralDirectoryRecord(cdBody, e);
         }
-        int count = central.size();
+        byte[] cdBytes = cdBody.toByteArray();
+        long cdSize = cdBytes.length;
+        int entryCount = central.size();
+        boolean zip64 = entryCount > Zip64Support.MAX_STANDARD_ENTRIES
+                || Zip64Support.needsZip64(cdSize, cdOffset);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream(cdBytes.length + (zip64 ? 76 : 22));
+        out.write(cdBytes, 0, cdBytes.length);
+        if (zip64) {
+            byte[] eocd64 = Zip64Support.eocdRecord(entryCount, cdSize, cdOffset);
+            out.write(eocd64, 0, eocd64.length);
+            byte[] locator = Zip64Support.locatorRecord(cdOffset + cdSize);
+            out.write(locator, 0, locator.length);
+        }
+        writeClassicEocd(out, entryCount, cdSize, cdOffset, zip64);
+        return out.toByteArray();
+    }
+
+    private static void writeCentralDirectoryRecord(ByteArrayOutputStream body, CdEntry e) {
+        boolean zip64 = Zip64Support.needsZip64(e.compSize, e.rawSize, e.offset);
+        byte[] extra = zip64 ? Zip64Support.centralExtra(e.rawSize, e.compSize, e.offset) : Zip64Support.NO_EXTRA;
+        ByteBuffer b = ByteBuffer.allocate(46 + e.name.length + extra.length).order(ByteOrder.LITTLE_ENDIAN);
+        b.putInt(PartFormat.CDH_SIG);
+        b.putShort((short) (zip64 ? 45 : 20));
+        b.putShort((short) (zip64 ? 45 : 20));
+        b.putShort((short) PartFormat.FLAG_UTF8);
+        b.putShort((short) e.method);
+        b.putShort((short) PartFormat.DOS_TIME);
+        b.putShort((short) PartFormat.DOS_DATE);
+        b.putInt((int) e.crc);
+        b.putInt(zip64 ? 0xFFFFFFFF : (int) e.compSize);
+        b.putInt(zip64 ? 0xFFFFFFFF : (int) e.rawSize);
+        b.putShort((short) e.name.length);
+        b.putShort((short) extra.length);
+        b.putShort((short) 0); // comment length
+        b.putShort((short) 0); // disk number start
+        b.putShort((short) 0); // internal file attributes
+        b.putInt(0);           // external file attributes
+        b.putInt(zip64 ? 0xFFFFFFFF : (int) e.offset);
+        b.put(e.name);
+        b.put(extra);
+        body.write(b.array(), 0, b.array().length);
+    }
+
+    /** Classic EOCD; when {@code zip64}, its count/size/offset fields are all sentineled together. */
+    private static void writeClassicEocd(ByteArrayOutputStream out, int entryCount, long cdSize,
+                                         long cdOffset, boolean zip64) {
+        int countField = zip64 ? 0xFFFF : entryCount;
+        long sizeField = zip64 ? 0xFFFFFFFFL : cdSize;
+        long offsetField = zip64 ? 0xFFFFFFFFL : cdOffset;
+        ByteBuffer b = ByteBuffer.allocate(22).order(ByteOrder.LITTLE_ENDIAN);
         b.putInt(PartFormat.EOCD_SIG);
         b.putShort((short) 0);
         b.putShort((short) 0);
-        b.putShort((short) count);
-        b.putShort((short) count);
-        b.putInt(size);
-        b.putInt((int) cdOffset);
+        b.putShort((short) countField);
+        b.putShort((short) countField);
+        b.putInt((int) sizeField);
+        b.putInt((int) offsetField);
         b.putShort((short) 0);
-        byte[] out = new byte[b.position()];
-        b.flip();
-        b.get(out);
-        return out;
+        out.write(b.array(), 0, b.array().length);
     }
 
     private static void copy(InputStream in, OutputStream out, long n, byte[] buf) throws IOException {
