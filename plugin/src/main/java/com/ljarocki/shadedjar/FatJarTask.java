@@ -100,6 +100,16 @@ public abstract class FatJarTask extends DefaultTask {
     @Optional
     public abstract MapProperty<String, String> getRelocations();
 
+    /** Include patterns per relocation, keyed by the same prefix as {@link #getRelocations()}. */
+    @Input
+    @Optional
+    public abstract MapProperty<String, String> getRelocationIncludes();
+
+    /** Exclude patterns per relocation, same shape as {@link #getRelocationIncludes()}. */
+    @Input
+    @Optional
+    public abstract MapProperty<String, String> getRelocationExcludes();
+
     @Inject
     public abstract WorkerExecutor getWorkerExecutor();
 
@@ -115,6 +125,8 @@ public abstract class FatJarTask extends DefaultTask {
         int level = getLevel().getOrElse(-1);
         boolean store = getStore().getOrElse(false);
         Map<String, String> relocations = getRelocations().getOrElse(Collections.emptyMap());
+        Map<String, String> relocationIncludes = getRelocationIncludes().getOrElse(Collections.emptyMap());
+        Map<String, String> relocationExcludes = getRelocationExcludes().getOrElse(Collections.emptyMap());
 
         // Resolve sources in declared order; keep only things that exist.
         List<File> sources = new ArrayList<>();
@@ -142,6 +154,8 @@ public abstract class FatJarTask extends DefaultTask {
                 p.getLevel().set(level);
                 p.getStore().set(store);
                 p.getRelocations().set(relocations);
+                p.getRelocationIncludes().set(relocationIncludes);
+                p.getRelocationExcludes().set(relocationExcludes);
             });
         }
         queue.await();

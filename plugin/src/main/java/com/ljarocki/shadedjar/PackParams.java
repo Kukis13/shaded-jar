@@ -21,4 +21,10 @@ public interface PackParams extends WorkParameters {
 
     /** Package relocations (source dotted prefix -> shaded dotted prefix); empty = fat jar. */
     MapProperty<String, String> getRelocations();
+
+    /** Include patterns per relocation, keyed by the same prefix as {@link #getRelocations()}. */
+    MapProperty<String, String> getRelocationIncludes();
+
+    /** Exclude patterns per relocation, same shape as {@link #getRelocationIncludes()}. */
+    MapProperty<String, String> getRelocationExcludes();
 }

@@ -15,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.Enumeration;
 import java.util.HashMap;
@@ -61,15 +62,24 @@ final class SourcePacker {
     private final int level;
     private final boolean store;
     private final Map<String, String> relocations;
+    private final Map<String, String> relocationIncludes;
+    private final Map<String, String> relocationExcludes;
 
     SourcePacker(int level, boolean store, Map<String, String> relocations) {
+        this(level, store, relocations, Collections.emptyMap(), Collections.emptyMap());
+    }
+
+    SourcePacker(int level, boolean store, Map<String, String> relocations,
+                Map<String, String> relocationIncludes, Map<String, String> relocationExcludes) {
         this.level = level;
         this.store = store;
         this.relocations = relocations;
+        this.relocationIncludes = relocationIncludes;
+        this.relocationExcludes = relocationExcludes;
     }
 
     void pack(File source, File part) throws IOException {
-        Relocator relocator = new Relocator(relocations);
+        Relocator relocator = new Relocator(relocations, relocationIncludes, relocationExcludes);
         try (OutputStream fos = Files.newOutputStream(part.toPath());
              DataOutputStream out = new DataOutputStream(new BufferedOutputStream(fos, 1 << 20))) {
             Deflater deflater = new Deflater(level, true);
