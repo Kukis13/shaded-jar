@@ -145,7 +145,11 @@ so concurrency follows the usual `--max-workers` / `org.gradle.workers.max`
    freshly generated manifest, and stripping of dependency manifests,
    signature files (`*.SF/.DSA/.RSA/.EC`) and stale `INDEX.LIST`. Any entry, or
    the central directory itself, that doesn't fit the classic ZIP format's
-   32-bit/16-bit fields transparently promotes to Zip64.
+   32-bit/16-bit fields transparently promotes to Zip64. If any source
+   contributes a multi-release-JAR override (`META-INF/versions/N/...`), the
+   generated manifest gets `Multi-Release: true` — without it the JVM ignores
+   that directory outright — and relocation applies to the override the same
+   way it does to the base class (see Known limitations).
 
 Service-file merging is **on by default** (Shadow requires an explicit
 `mergeServiceFiles()`), so `ServiceLoader`-based libraries — JDBC drivers, Jackson
@@ -194,7 +198,15 @@ inputs → incremental (`UP-TO-DATE`) and build-cache friendly (`FROM-CACHE`).
 - **Relocation is prefix-based**, applied to class bytecode, entry paths, string
   constants, and service files, optionally scoped per rule with `include`/
   `exclude` (see Usage above — a small pattern subset, not full Ant globs).
-  Multi-release-jar (`META-INF/versions/*`) awareness is not implemented yet.
+- **Multi-release JAR (`META-INF/versions/N/...`) awareness**: a versioned
+  override relocates the same way its base class does (prefix stripped,
+  mapped, reattached), and the output manifest gets `Multi-Release: true`
+  whenever any source contributes one. This covers `.class` overrides and
+  ordinary resources under a `versions/N/` directory; it does *not* special-
+  case a `META-INF/services/*` or Spring properties file that itself happens
+  to live under `versions/N/` (an unusual pattern) — that falls through to
+  being treated as a plain (correctly relocated and path-preserved, just not
+  merged) resource instead.
 - **String-constant relocation is best-effort** (prefix match), like Shadow — a
   literal that merely starts with a relocated package but isn't a class name
   would also be rewritten.
@@ -244,10 +256,10 @@ summary).
     spring.factories/.handlers/.schemas merge + relocation semantics),
     `PluginFunctionalTest`, `Zip64EntryCountFunctionalTest`,
     `SpringPropertiesFunctionalTest`, `RelocationFilterFunctionalTest`,
-    `GradleVersionCompatibilityFunctionalTest`, and
-    `ConfigurationCacheFunctionalTest` (TestKit: builds and runs real fat/
-    shaded/Zip64-scale/Spring-Boot-flavored/filtered-relocation jars, the
-    latter two explicitly against both Gradle 8.5 and 9.6.1).
+    `MultiReleaseJarFunctionalTest`, `GradleVersionCompatibilityFunctionalTest`,
+    and `ConfigurationCacheFunctionalTest` (TestKit: builds and runs real fat/
+    shaded/Zip64-scale/Spring-Boot-flavored/filtered-relocation/multi-release
+    jars, the last two explicitly against both Gradle 8.5 and 9.6.1).
 - `sample/` — a runnable app applying shaded-jar + Shadow + a stock-Jar fat jar,
   demonstrating relocation and service merging.
 - `benchmark.sh` — timing harness.

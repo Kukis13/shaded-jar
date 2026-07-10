@@ -10,6 +10,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Package relocation: rewrites bundled classes and resources from a source
@@ -39,12 +41,27 @@ import java.util.Map;
  * (shorter-prefix) rule instead of being left unrelocated outright, so an
  * exclude can "un-relocate" a subpackage nested inside a broader rule.
  *
+ * <p>Multi-release JAR version overrides ({@code META-INF/versions/N/...})
+ * relocate consistently with their base counterpart — see {@link
+ * #relocateEntryName}. The generated manifest's {@code Multi-Release: true}
+ * attribute (needed for the JVM to even look at that directory) is handled
+ * separately, in {@code FatJarTask}, since it depends on the merged set of
+ * entries across every source rather than any one entry's own name.
+ *
  * <p>Rules are applied longest-source-prefix first so nested relocations are
  * unambiguous. An empty relocator is a no-op (plain fat JAR).
  */
 final class Relocator {
 
     private static final String SERVICES = "META-INF/services/";
+
+    /**
+     * Multi-release JAR (JEP 238) version-specific override directory, e.g.
+     * {@code META-INF/versions/17/com/google/common/Foo.class}. Entry paths
+     * under here relocate the same way their base (unversioned) counterpart
+     * does — see {@link #relocateEntryName}.
+     */
+    private static final Pattern MRJAR_VERSION_PREFIX = Pattern.compile("^META-INF/versions/\\d+/");
 
     private static final class Rule {
         final String fromSlash, toSlash, fromDot, toDot;
@@ -197,8 +214,20 @@ final class Relocator {
         return writer.toByteArray();
     }
 
-    /** Map an entry path: a {@code .class} file or a resource under a package. */
+    /**
+     * Map an entry path: a {@code .class} file or a resource under a package.
+     * A multi-release-JAR version override ({@code META-INF/versions/N/...})
+     * is relocated the same way its base counterpart would be — the version
+     * prefix is stripped, the rest is mapped normally, then the prefix is
+     * reattached — so a versioned override doesn't end up pointing at the
+     * dependency's original (unrelocated) package while the base class moves.
+     */
     String relocateEntryName(String name) {
+        Matcher m = MRJAR_VERSION_PREFIX.matcher(name);
+        if (m.find()) {
+            String prefix = m.group();
+            return prefix + relocateEntryName(name.substring(prefix.length()));
+        }
         if (name.endsWith(".class")) {
             return mapSlash(name.substring(0, name.length() - 6)) + ".class";
         }
