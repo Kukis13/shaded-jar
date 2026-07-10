@@ -7,7 +7,7 @@
 # graph setup), which is subtracted to isolate the actual archive cost.
 #
 # The shaded-jar row is measured twice: with all cores, and pinned to a single
-# thread (-PshadeThreads=1), to separate the parallelism win from the core
+# worker (--max-workers=1), to separate the parallelism win from the core
 # algorithm. Shadow and stock Jar are single-threaded for the archive step.
 #
 # Usage:  bash benchmark.sh [runs]
@@ -39,11 +39,12 @@ OVERHEAD=$(bench benchNoop)
 
 # scenarios: "label|task|extra-args"
 # Two comparisons: shaded (relocation on) vs Shadow, and plain-fat vs stock Jar.
+# Single-thread is forced with Gradle's own --max-workers=1.
 scenarios=(
   "shaded, all cores  (shaded-jar)|fatJar|"
-  "shaded, 1 thread   (shaded-jar)|fatJar|-PshadeThreads=1"
+  "shaded, 1 worker   (shaded-jar)|fatJar|--max-workers=1"
   "shaded             (Shadow)|shadowJar|"
-  "fat, 1 thread      (shaded-jar)|fatJar|-PshadeThreads=1 -PnoRelocate"
+  "fat, 1 worker      (shaded-jar)|fatJar|--max-workers=1 -PnoRelocate"
   "fat                (Gradle Jar)|stockFatJar|"
 )
 

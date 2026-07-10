@@ -29,8 +29,8 @@ import java.util.zip.ZipFile;
  *
  * <p>Instances are stateless beyond their config, so {@link #pack} may be called
  * concurrently for different sources: each call uses its own {@link Deflater} and
- * {@link Relocator}. {@link FatJarTask} runs one call per source on a fixed thread
- * pool whose size is the {@code threads} property (1 = fully sequential).
+ * {@link Relocator}. {@link PackAction} runs one {@code pack} per source on
+ * Gradle's worker pool (bounded by {@code --max-workers}).
  */
 final class SourcePacker {
 

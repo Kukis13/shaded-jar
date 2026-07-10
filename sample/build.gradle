@@ -47,11 +47,6 @@ shadedJar {
     }
 }
 
-// Let the benchmark pin the pack thread count, e.g. -PshadeThreads=1.
-if (project.hasProperty('shadeThreads')) {
-    tasks.named('fatJar') { threads = Integer.parseInt(project.property('shadeThreads')) }
-}
-
 // --- Shadow (the benchmark to beat) ---
 shadowJar {
     archiveClassifier = 'shadow'
