@@ -118,7 +118,9 @@ so concurrency follows the usual `--max-workers` / `org.gradle.workers.max`
 3. **Assemble** — a single thread streams the parts into one valid, reproducible
    JAR: first-wins duplicate handling, **`META-INF/services/*` merged** across all
    sources (deduped), a freshly generated manifest, and stripping of dependency
-   manifests, signature files (`*.SF/.DSA/.RSA/.EC`) and stale `INDEX.LIST`.
+   manifests, signature files (`*.SF/.DSA/.RSA/.EC`) and stale `INDEX.LIST`. Any
+   entry, or the central directory itself, that doesn't fit the classic ZIP
+   format's 32-bit/16-bit fields transparently promotes to Zip64.
 
 Service-file merging is **on by default** (Shadow requires an explicit
 `mergeServiceFiles()`), so `ServiceLoader`-based libraries — JDBC drivers, Jackson
@@ -128,7 +130,14 @@ inputs → incremental (`UP-TO-DATE`) and build-cache friendly (`FROM-CACHE`).
 
 ## Known limitations
 
-- **No Zip64** — fails fast with a clear error above 65,535 entries or 4 GiB.
+- **Zip64 covers the output archive**: more than 65,534 entries, or any entry/
+  central-directory size or offset past 4 GiB, transparently promotes to Zip64
+  extra fields and a Zip64 End Of Central Directory record + locator — no size
+  cliff, no separate flag. It does *not* yet cover *reading* a Zip64-format
+  source dependency jar for the verbatim-copy fast path below (that case just
+  falls back to the normal decode/recompress path for that one jar) — an
+  already-Zip64 dependency is rare enough that this is a minor missed
+  optimization, not a correctness gap.
 - **Relocation is prefix-based**, applied to class bytecode, entry paths, string
   constants, and service files. Per-relocation `include`/`exclude` filters and
   multi-release-jar (`META-INF/versions/*`) awareness are not implemented yet.
@@ -157,8 +166,11 @@ summary).
 ## Layout
 
 - `plugin/` — the plugin (`com.ljarocki.shaded-jar`), an included build.
-  - `src/test/` — `RelocatorTest` (hermetic bytecode/path/service tests) and
-    `PluginFunctionalTest` (TestKit: builds and runs real fat/shaded jars).
+  - `src/test/` — `RelocatorTest` (hermetic bytecode/path/service tests),
+    `SourcePackerTest` (verbatim compressed-stream copy), `Zip64SupportTest`
+    (hermetic Zip64 byte-layout tests), `PluginFunctionalTest` and
+    `Zip64EntryCountFunctionalTest` (TestKit: builds and runs real fat/shaded/
+    Zip64-scale jars).
 - `sample/` — a runnable app applying shaded-jar + Shadow + a stock-Jar fat jar,
   demonstrating relocation and service merging.
 - `benchmark.sh` — timing harness.
