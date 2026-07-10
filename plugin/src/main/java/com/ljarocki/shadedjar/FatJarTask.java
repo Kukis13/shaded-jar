@@ -51,9 +51,11 @@ import java.util.zip.Inflater;
  * <p>With no {@link #getRelocations() relocations} this is a plain fat JAR; with
  * relocations it is a shaded JAR (packages rewritten by ASM in the workers).
  * Duplicate strategy is first-wins in classpath order (so project classes beat
- * deps), except {@code META-INF/services/*} files, which are merged across all
- * sources. Signature files and dependency manifests are stripped; a fresh
- * manifest with an optional {@code Main-Class} is generated.
+ * deps), except {@code META-INF/services/*} files and the well-known Spring
+ * properties files ({@code spring.factories}/{@code .handlers}/{@code .schemas},
+ * see {@link SpringProperties}), which are merged across all sources instead.
+ * Signature files and dependency manifests are stripped; a fresh manifest with
+ * an optional {@code Main-Class} is generated.
  */
 @CacheableTask
 public abstract class FatJarTask extends DefaultTask {
@@ -181,6 +183,8 @@ public abstract class FatJarTask extends DefaultTask {
         Set<String> seen = new HashSet<>();
         // SPI files are merged, not first-wins: name -> ordered unique providers.
         Map<String, LinkedHashSet<String>> services = new LinkedHashMap<>();
+        // Spring properties files are merged per-key (see SpringProperties): file name -> key -> values.
+        Map<String, Map<String, LinkedHashSet<String>>> springFiles = new LinkedHashMap<>();
         long[] offset = {0};
 
         try (OutputStream raw = Files.newOutputStream(outFile.toPath());
@@ -216,6 +220,15 @@ public abstract class FatJarTask extends DefaultTask {
                             accumulateService(services, name, body);
                             continue;
                         }
+                        // Same idea for the well-known Spring properties files, per-key.
+                        SpringProperties.Kind springKind = SpringProperties.Kind.of(name);
+                        if (springKind != null) {
+                            byte[] body = readEntryBytes(din, method, compSize, rawSize);
+                            Map<String, LinkedHashSet<String>> keyValues =
+                                    springFiles.computeIfAbsent(name, k -> new LinkedHashMap<>());
+                            SpringProperties.accumulate(keyValues, springKind, body);
+                            continue;
+                        }
                         if (isFiltered(name) || !seen.add(name)) {
                             skipFully(din, compSize);
                             a.dropped++;
@@ -240,6 +253,14 @@ public abstract class FatJarTask extends DefaultTask {
                 StringBuilder sb = new StringBuilder();
                 for (String provider : services.get(svc)) sb.append(provider).append('\n');
                 writeStored(os, svc, sb.toString().getBytes(StandardCharsets.UTF_8), central, offset);
+            }
+
+            // Emit the merged Spring properties files (spring.factories/.handlers/.schemas).
+            List<String> springNames = new ArrayList<>(springFiles.keySet());
+            Collections.sort(springNames);
+            for (String name : springNames) {
+                if (!seen.add(name)) continue;
+                writeStored(os, name, SpringProperties.renderMerged(springFiles.get(name)), central, offset);
             }
 
             long cdOffset = offset[0];

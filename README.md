@@ -116,20 +116,45 @@ so concurrency follows the usual `--max-workers` / `org.gradle.workers.max`
    through ASM whenever any relocation is configured, even if their own path
    isn't relocated, because their bytecode may reference a class that is.
 3. **Assemble** — a single thread streams the parts into one valid, reproducible
-   JAR: first-wins duplicate handling, **`META-INF/services/*` merged** across all
-   sources (deduped), a freshly generated manifest, and stripping of dependency
-   manifests, signature files (`*.SF/.DSA/.RSA/.EC`) and stale `INDEX.LIST`. Any
-   entry, or the central directory itself, that doesn't fit the classic ZIP
-   format's 32-bit/16-bit fields transparently promotes to Zip64.
+   JAR: first-wins duplicate handling, **`META-INF/services/*` and the Spring
+   properties files merged** across all sources (see the table below), a
+   freshly generated manifest, and stripping of dependency manifests,
+   signature files (`*.SF/.DSA/.RSA/.EC`) and stale `INDEX.LIST`. Any entry, or
+   the central directory itself, that doesn't fit the classic ZIP format's
+   32-bit/16-bit fields transparently promotes to Zip64.
 
 Service-file merging is **on by default** (Shadow requires an explicit
 `mergeServiceFiles()`), so `ServiceLoader`-based libraries — JDBC drivers, Jackson
-modules, etc. — keep working in the merged jar. Timestamps are normalized, so
-output is byte-reproducible. The task is `@CacheableTask` with `@Classpath`
-inputs → incremental (`UP-TO-DATE`) and build-cache friendly (`FROM-CACHE`).
+modules, etc. — keep working in the merged jar. The three well-known Spring
+resource files get the same treatment, but with the merge semantics they
+actually need instead of line-concatenation:
+
+| file                        | merge                                    | relocated                        |
+| ---------------------------- | ----------------------------------------- | --------------------------------- |
+| `META-INF/spring.factories`  | comma-append + dedup per key (a real list) | key **and** each listed value      |
+| `META-INF/spring.handlers`   | first-wins per key (a real conflict otherwise) | value only (key is a URI)     |
+| `META-INF/spring.schemas`    | first-wins per key                        | neither (key/value are resource IDs, not classes) |
+
+`spring.factories` merges this way because that's exactly how Spring's own
+`SpringFactoriesLoader` merges multiple copies of the file across a normal
+(unshaded) classpath — a fat jar just has to do at build time what would
+otherwise happen at runtime. Timestamps are normalized, so output is
+byte-reproducible. The task is `@CacheableTask` with `@Classpath` inputs →
+incremental (`UP-TO-DATE`) and build-cache friendly (`FROM-CACHE`).
 
 ## Known limitations
 
+- **Resource transformers cover `META-INF/services/*` and the three Spring
+  properties files** (`spring.factories`/`.handlers`/`.schemas`). Other
+  formats with their own merge semantics — Spring Boot's binary-adjacent
+  config metadata, log4j2's binary plugin cache (`Log4j2Plugins.dat`),
+  HOCON/`reference.conf` (Akka/Lightbend Config) — aren't handled yet; a
+  dependency relying on one of those needs its merge/relocation handled
+  another way for now.
+- **`spring.schemas` values are never relocated** — they're classpath resource
+  paths (e.g. `META-INF/some.xsd`), not class names, so package-prefix
+  relocation doesn't apply to them the way it does to `spring.factories`/
+  `.handlers` values.
 - **Zip64 covers the output archive**: more than 65,534 entries, or any entry/
   central-directory size or offset past 4 GiB, transparently promotes to Zip64
   extra fields and a Zip64 End Of Central Directory record + locator — no size
@@ -168,9 +193,11 @@ summary).
 - `plugin/` — the plugin (`com.ljarocki.shaded-jar`), an included build.
   - `src/test/` — `RelocatorTest` (hermetic bytecode/path/service tests),
     `SourcePackerTest` (verbatim compressed-stream copy), `Zip64SupportTest`
-    (hermetic Zip64 byte-layout tests), `PluginFunctionalTest` and
-    `Zip64EntryCountFunctionalTest` (TestKit: builds and runs real fat/shaded/
-    Zip64-scale jars).
+    (hermetic Zip64 byte-layout tests), `SpringPropertiesTest` (hermetic
+    spring.factories/.handlers/.schemas merge + relocation semantics),
+    `PluginFunctionalTest`, `Zip64EntryCountFunctionalTest`, and
+    `SpringPropertiesFunctionalTest` (TestKit: builds and runs real fat/
+    shaded/Zip64-scale/Spring-Boot-flavored jars).
 - `sample/` — a runnable app applying shaded-jar + Shadow + a stock-Jar fat jar,
   demonstrating relocation and service merging.
 - `benchmark.sh` — timing harness.
