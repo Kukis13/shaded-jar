@@ -226,7 +226,9 @@ public abstract class FatJarTask extends DefaultTask {
                             byte[] body = readEntryBytes(din, method, compSize, rawSize);
                             Map<String, LinkedHashSet<String>> keyValues =
                                     springFiles.computeIfAbsent(name, k -> new LinkedHashMap<>());
-                            SpringProperties.accumulate(keyValues, springKind, body);
+                            for (String conflict : SpringProperties.accumulate(keyValues, springKind, body)) {
+                                getLogger().warn("shaded-jar: " + conflict);
+                            }
                             continue;
                         }
                         if (isFiltered(name) || !seen.add(name)) {

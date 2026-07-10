@@ -19,6 +19,7 @@ import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * End-to-end proof that {@code spring.factories}/{@code .handlers} merging and
@@ -101,6 +102,35 @@ class SpringPropertiesFunctionalTest {
         Properties out = readEntryAsProperties(dir.resolve("build/libs/app-all.jar"), "META-INF/spring.factories");
         assertEquals(1, out.size());
         assertEquals("com.example.shaded.a.Impl", out.getProperty("com.example.shaded.a.Ext"));
+    }
+
+    @Test
+    void conflictingSpringHandlersKey_isKeptFirstWinsAndWarnedAbout() throws Exception {
+        writeDepJar("libs/dep-a.jar",
+                "META-INF/spring.handlers", "http\\://example.com/ns=com.example.a.HandlerA\n");
+        writeDepJar("libs/dep-b.jar",
+                "META-INF/spring.handlers", "http\\://example.com/ns=com.example.b.HandlerB\n");
+
+        BuildResult result = run(
+                "plugins {\n"
+                + "  id 'java'\n"
+                + "  id 'com.ljarocki.shaded-jar'\n"
+                + "}\n"
+                + "dependencies {\n"
+                + "  implementation files('libs/dep-a.jar', 'libs/dep-b.jar')\n"
+                + "}\n"
+                + "shadedJar { archiveClassifier = 'all' }\n");
+        assertEquals(TaskOutcome.SUCCESS, result.task(":fatJar").getOutcome());
+
+        // The build log surfaces the conflict instead of silently dropping one side.
+        assertTrue(result.getOutput().contains("http://example.com/ns"), result.getOutput());
+        assertTrue(result.getOutput().contains("com.example.a.HandlerA"), result.getOutput());
+        assertTrue(result.getOutput().contains("com.example.b.HandlerB"), result.getOutput());
+
+        // Exactly one of the two conflicting values survives — not both comma-joined.
+        Properties out = readEntryAsProperties(dir.resolve("build/libs/app-all.jar"), "META-INF/spring.handlers");
+        String kept = out.getProperty("http://example.com/ns");
+        assertTrue(kept.equals("com.example.a.HandlerA") || kept.equals("com.example.b.HandlerB"), kept);
     }
 
     // --- helpers --------------------------------------------------------------

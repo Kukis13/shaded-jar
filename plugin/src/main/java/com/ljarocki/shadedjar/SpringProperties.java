@@ -28,7 +28,8 @@ import java.util.Properties;
  *   <li>{@code META-INF/spring.handlers} — key is an XML namespace URI (never
  *       relocated), value is a single dotted handler class name (relocated).
  *       Real duplicate keys are a genuine authoring conflict, not a list to
- *       merge, so we resolve them first-wins in classpath order.
+ *       merge, so we resolve them first-wins in classpath order and report
+ *       the conflict (see {@link #accumulate}) rather than silently dropping it.
  *   <li>{@code META-INF/spring.schemas} — key and value are both non-class
  *       identifiers (a public/system ID and a classpath resource path), so
  *       neither is relocated; merged first-wins per key like {@code spring.handlers}.
@@ -93,9 +94,18 @@ final class SpringProperties {
         return render(out);
     }
 
-    /** Accumulate one source's entries into the running per-key merge for this file. */
-    static void accumulate(Map<String, LinkedHashSet<String>> keyValues, Kind kind, byte[] body)
+    /**
+     * Accumulate one source's entries into the running per-key merge for this
+     * file. Returns a human-readable message for each {@link MergeMode#FIRST_WINS}
+     * key that this call found already present with a genuinely different value
+     * — a real cross-jar conflict, since that merge mode has no way to combine
+     * two different values correctly. The caller (which has a build-tool logger,
+     * unlike this pure/no-I/O class) is expected to surface these; the kept
+     * (first) value is what ends up in the merged output either way.
+     */
+    static List<String> accumulate(Map<String, LinkedHashSet<String>> keyValues, Kind kind, byte[] body)
             throws IOException {
+        List<String> conflicts = new ArrayList<>();
         Properties props = parse(body);
         List<String> keys = new ArrayList<>();
         for (Object k : props.keySet()) keys.add((String) k);
@@ -105,7 +115,12 @@ final class SpringProperties {
             String value = props.getProperty(key);
             LinkedHashSet<String> values = keyValues.computeIfAbsent(key, k -> new LinkedHashSet<>());
             if (kind.mergeMode == MergeMode.FIRST_WINS) {
-                if (values.isEmpty()) values.add(value);
+                if (values.isEmpty()) {
+                    values.add(value);
+                } else if (!values.contains(value)) {
+                    conflicts.add(kind.entryName + ": key '" + key + "' has conflicting values — keeping '"
+                            + values.iterator().next() + "', discarding '" + value + "'");
+                }
             } else {
                 for (String part : value.split(",")) {
                     String trimmed = part.trim();
@@ -113,6 +128,7 @@ final class SpringProperties {
                 }
             }
         }
+        return conflicts;
     }
 
     /** Render the fully-merged per-key values (joined with {@code ,} for LIST_APPEND keys). */

@@ -138,9 +138,13 @@ actually need instead of line-concatenation:
 `spring.factories` merges this way because that's exactly how Spring's own
 `SpringFactoriesLoader` merges multiple copies of the file across a normal
 (unshaded) classpath — a fat jar just has to do at build time what would
-otherwise happen at runtime. Timestamps are normalized, so output is
-byte-reproducible. The task is `@CacheableTask` with `@Classpath` inputs →
-incremental (`UP-TO-DATE`) and build-cache friendly (`FROM-CACHE`).
+otherwise happen at runtime. `spring.handlers`/`.schemas` have no such
+multi-value meaning, so a genuine same-key conflict between two dependencies
+(different values, not just the same file included twice) is logged as a
+build warning rather than silently dropped — the first one (in classpath
+order) still wins, but you'll know about it. Timestamps are normalized, so
+output is byte-reproducible. The task is `@CacheableTask` with `@Classpath`
+inputs → incremental (`UP-TO-DATE`) and build-cache friendly (`FROM-CACHE`).
 
 ## Known limitations
 

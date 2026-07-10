@@ -7,6 +7,7 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
@@ -16,6 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Hermetic tests for {@link SpringProperties} — no Gradle, no I/O beyond
@@ -52,9 +54,11 @@ class SpringPropertiesTest {
         // ':' is itself a Properties key/value separator, so a real spring.handlers
         // file escapes it in the URI key as '\:' — mirror that here.
         Map<String, LinkedHashSet<String>> merged = new LinkedHashMap<>();
-        SpringProperties.accumulate(merged, SpringProperties.Kind.HANDLERS,
+        List<String> firstBatchConflicts = SpringProperties.accumulate(merged, SpringProperties.Kind.HANDLERS,
                 utf8("http\\://a=com.a.HandlerA\n"));
-        SpringProperties.accumulate(merged, SpringProperties.Kind.HANDLERS,
+        assertTrue(firstBatchConflicts.isEmpty(), "a key's first occurrence is never a conflict");
+
+        List<String> secondBatchConflicts = SpringProperties.accumulate(merged, SpringProperties.Kind.HANDLERS,
                 utf8("http\\://a=com.b.HandlerB\nhttp\\://b=com.b.HandlerBB\n"));
 
         byte[] rendered = SpringProperties.renderMerged(merged);
@@ -62,6 +66,30 @@ class SpringPropertiesTest {
 
         assertEquals("com.a.HandlerA", out.getProperty("http://a"), "first source wins, not comma-joined");
         assertEquals("com.b.HandlerBB", out.getProperty("http://b"));
+
+        // The genuine conflict on "http://a" (two different values for the same
+        // key) is reported so it isn't silently swallowed; "http://b" is a plain
+        // first occurrence in this same batch, so it must not be reported.
+        assertEquals(1, secondBatchConflicts.size());
+        String conflict = secondBatchConflicts.get(0);
+        assertTrue(conflict.contains("http://a"), conflict);
+        assertTrue(conflict.contains("com.a.HandlerA"), conflict);
+        assertTrue(conflict.contains("com.b.HandlerB"), conflict);
+    }
+
+    @Test
+    void firstWins_reDeclaringTheSameAlreadyKeptValue_isNotReportedAsAConflict() throws Exception {
+        Map<String, LinkedHashSet<String>> merged = new LinkedHashMap<>();
+        SpringProperties.accumulate(merged, SpringProperties.Kind.HANDLERS, utf8("http\\://a=com.a.HandlerA\n"));
+
+        // Two different jars (or a jar included twice) declaring the identical
+        // value for the same key is not a real conflict — nothing to warn about.
+        List<String> conflicts = SpringProperties.accumulate(merged, SpringProperties.Kind.HANDLERS,
+                utf8("http\\://a=com.a.HandlerA\n"));
+
+        assertTrue(conflicts.isEmpty());
+        assertEquals("com.a.HandlerA",
+                SpringProperties.parse(SpringProperties.renderMerged(merged)).getProperty("http://a"));
     }
 
     @Test
