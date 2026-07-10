@@ -23,9 +23,9 @@ subtracted, best of 5):
 
 | task                     | archive step | vs shaded-jar | output size |
 | ------------------------ | -----------: | ------------: | ----------: |
-| **fatJar** (shaded-jar)  |  **1870 ms** |          1.0× |   33.93 MB  |
-| shadowJar (Shadow)       |      5649 ms |         3.02× |   34.38 MB  |
-| stockFatJar (Gradle Jar)*|      2495 ms |            —  |   33.99 MB  |
+| **fatJar** (shaded-jar)  |  **1807 ms** |          1.0× |   33.82 MB  |
+| shadowJar (Shadow)       |      5563 ms |         3.08× |   34.38 MB  |
+| stockFatJar (Gradle Jar)*|      2431 ms |            —  |   33.99 MB  |
 
 shaded-jar is **~3× faster than Shadow** with relocation on, and produces the
 smallest jar. Both `fatJar` and `shadowJar` relocate Guava and merge service
@@ -39,26 +39,29 @@ a like-for-like shading comparison. Reproduce all of this with `bash benchmark.s
 ### Single worker: algorithm vs parallelism
 
 Forcing `--max-workers=1` isolates the core algorithm from the parallelism win.
-Net archive step, best of 5, same sample:
+Net archive step, best of 6, same sample:
 
 | scenario                          | archive step |
 | --------------------------------- | -----------: |
-| shaded, all cores  (shaded-jar)   |     1870 ms  |
-| shaded, 1 worker   (shaded-jar)   |     3653 ms  |
-| shaded             (Shadow)       |     5649 ms  |
-| fat, 1 worker      (shaded-jar)   |     3072 ms  |
-| fat                (Gradle Jar)   |     2495 ms  |
+| shaded, all cores  (shaded-jar)   |     1807 ms  |
+| shaded, 1 worker   (shaded-jar)   |     3542 ms  |
+| shaded             (Shadow)       |     5563 ms  |
+| fat, 1 worker      (shaded-jar)   |     1399 ms  |
+| fat                (Gradle Jar)   |     2431 ms  |
 
-- **vs Shadow, shaded-jar is faster even on one worker** (3653 vs 5649 ms, ~1.5×):
-  the core packing/assembly is more efficient, and parallelism then adds ~1.95× on
-  top (3653 → 1870 on 12 cores — sub-linear because assembly is single-threaded
-  and a few large jars dominate the pack stage).
-- **vs stock Gradle `Jar` (plain fat), shaded-jar is ~1.2× *slower* on one worker**
-  (3072 vs 2495 ms). Our per-source "part file" intermediate (write to disk, read
-  back) plus full re-inflate/re-deflate cost more single-threaded than Gradle's
-  direct streaming — so the lead over stock is *purely* parallelism. Copying
-  already-compressed DEFLATE streams verbatim (a planned optimization) would close
-  this gap.
+- **vs Shadow, shaded-jar is faster even on one worker** (3542 vs 5563 ms, ~1.6×):
+  the core packing/assembly is more efficient, and parallelism then adds ~1.96× on
+  top (3542 → 1807 on 12 cores — sub-linear because assembly is single-threaded
+  and a few large jars dominate the pack stage). This row is unchanged by the
+  verbatim-copy optimization below, because relocation is on: every `.class` file
+  still has to be inflated, rewritten by ASM, and re-deflated.
+- **vs stock Gradle `Jar` (plain fat), shaded-jar is now ~1.7× *faster* on one
+  worker** (1399 vs 2431 ms) — a reversal from the ~1.2× slower it used to be.
+  Plain fat jars (no relocation) now copy every dependency entry's compressed
+  DEFLATE stream straight out of its source jar's local file header, skipping
+  the inflate/re-deflate round trip entirely (see "How it works" below); the
+  per-source part-file intermediate is the only remaining overhead, so the lead
+  over stock is no longer *purely* parallelism.
 
 ## Usage
 
@@ -105,6 +108,13 @@ so concurrency follows the usual `--max-workers` / `org.gradle.workers.max`
    with ASM's `ClassRemapper` (type references, descriptors, string constants) and
    moves its entry path.
    This is the CPU-heavy stage stock tooling runs single-threaded.
+   For a dependency entry whose bytes won't change — always true in a plain fat
+   jar, and true for any non-class, non-service entry in a shaded jar too, since
+   relocation only ever renames those, never rewrites their content — the worker
+   copies the already-DEFLATE'd bytes straight out of the source jar's local file
+   header instead of inflating and re-deflating them. Class files still always go
+   through ASM whenever any relocation is configured, even if their own path
+   isn't relocated, because their bytecode may reference a class that is.
 3. **Assemble** — a single thread streams the parts into one valid, reproducible
    JAR: first-wins duplicate handling, **`META-INF/services/*` merged** across all
    sources (deduped), a freshly generated manifest, and stripping of dependency
@@ -125,8 +135,12 @@ inputs → incremental (`UP-TO-DATE`) and build-cache friendly (`FROM-CACHE`).
 - **String-constant relocation is best-effort** (prefix match), like Shadow — a
   literal that merely starts with a relocated package but isn't a class name
   would also be rewritten.
-- Dependency entries are re-inflated then re-deflated; copying already-compressed
-  DEFLATE streams verbatim is a future optimization.
+- **Verbatim-copied entries keep the source jar's original DEFLATE level**,
+  not the configured `level`, since their compressed bytes are never touched.
+  The copy also only applies to source jars with a plain (non-Zip64) central
+  directory; anything else — or any entry with an unreadable local header —
+  transparently falls back to the normal decode/recompress path, so this is a
+  pure performance optimization with no effect on correctness.
 
 ## Development
 
