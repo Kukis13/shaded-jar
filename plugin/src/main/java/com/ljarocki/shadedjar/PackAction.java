@@ -18,7 +18,8 @@ public abstract class PackAction implements WorkAction<PackParams> {
     public void execute() {
         PackParams p = getParameters();
         SourcePacker packer = new SourcePacker(
-                p.getLevel().get(), p.getStore().get(), p.getRelocations().get());
+                p.getLevel().get(), p.getStore().get(), p.getRelocations().get(),
+                p.getRelocationIncludes().get(), p.getRelocationExcludes().get());
         try {
             packer.pack(p.getSource().getAsFile().get(), p.getPart().getAsFile().get());
         } catch (IOException ex) {

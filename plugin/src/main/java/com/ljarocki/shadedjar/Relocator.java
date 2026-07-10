@@ -7,6 +7,7 @@ import org.objectweb.asm.commons.Remapper;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -28,7 +29,17 @@ import java.util.Map;
  *       the provider class names inside.
  * </ul>
  *
- * Rules are applied longest-source-prefix first so nested relocations are
+ * <p>A rule can optionally be scoped with include/exclude patterns (see the
+ * {@code relocate(from, to) { include(...); exclude(...) }} DSL in {@link
+ * ShadedJarExtension}), so e.g. a public API type or an annotation meant to be
+ * found by its original name can be carved out of an otherwise-relocated
+ * package. Patterns are deliberately a small subset of Shadow/Ant-style globs,
+ * not the full syntax — see {@link #matchesPattern}. A name that a rule's
+ * prefix matches but whose filter rejects falls through to the next
+ * (shorter-prefix) rule instead of being left unrelocated outright, so an
+ * exclude can "un-relocate" a subpackage nested inside a broader rule.
+ *
+ * <p>Rules are applied longest-source-prefix first so nested relocations are
  * unambiguous. An empty relocator is a no-op (plain fat JAR).
  */
 final class Relocator {
@@ -37,23 +48,73 @@ final class Relocator {
 
     private static final class Rule {
         final String fromSlash, toSlash, fromDot, toDot;
-        Rule(String from, String to) {
+        final List<String> includes, excludes;
+
+        Rule(String from, String to, List<String> includes, List<String> excludes) {
             this.fromDot = from;
             this.toDot = to;
             this.fromSlash = from.replace('.', '/');
             this.toSlash = to.replace('.', '/');
+            this.includes = includes;
+            this.excludes = excludes;
         }
+
+        /** Whether this rule (whose prefix already matches {@code dotName}) actually applies to it. */
+        boolean isEligible(String dotName) {
+            for (String pattern : excludes) {
+                if (matchesPattern(pattern, dotName)) return false;
+            }
+            if (includes.isEmpty()) return true;
+            for (String pattern : includes) {
+                if (matchesPattern(pattern, dotName)) return true;
+            }
+            return false;
+        }
+    }
+
+    /**
+     * Deliberately not a full Ant/Shadow-style glob: only two forms are
+     * recognized. {@code "a.b.C"} (no wildcard) matches that exact dotted name.
+     * {@code "a.b.**"} matches {@code "a.b"} itself and everything nested under
+     * it ({@code "a.b.C"}, {@code "a.b.c.D"}, ...) — the same prefix semantics
+     * relocation rules themselves use. There is no mid-segment {@code *}
+     * wildcard and no support for multiple {@code **} in one pattern; those
+     * would need real glob-to-regex compilation for comparatively little
+     * real-world benefit over these two forms.
+     */
+    private static boolean matchesPattern(String pattern, String dotName) {
+        if (pattern.equals("**")) return true;
+        if (pattern.endsWith(".**")) {
+            String prefix = pattern.substring(0, pattern.length() - 3);
+            return dotName.equals(prefix) || dotName.startsWith(prefix + ".");
+        }
+        return dotName.equals(pattern);
     }
 
     private final List<Rule> rules;
     private final Remapper remapper;
 
     Relocator(Map<String, String> relocations) {
+        this(relocations, Collections.emptyMap(), Collections.emptyMap());
+    }
+
+    /**
+     * @param relocationIncludes optional, keyed by the same {@code from} prefix as
+     *     {@code relocations}; value is a comma-separated pattern list (see
+     *     {@link #matchesPattern}). A prefix with no entry here means "no include
+     *     filter" — everything under the prefix is eligible, the original behavior.
+     * @param relocationExcludes same shape as {@code relocationIncludes}; excludes
+     *     always win over includes.
+     */
+    Relocator(Map<String, String> relocations, Map<String, String> relocationIncludes,
+              Map<String, String> relocationExcludes) {
         List<Rule> r = new ArrayList<>();
         if (relocations != null) {
             for (Map.Entry<String, String> e : relocations.entrySet()) {
                 if (e.getKey() != null && !e.getKey().isEmpty() && e.getValue() != null) {
-                    r.add(new Rule(e.getKey(), e.getValue()));
+                    List<String> includes = splitCsv(get(relocationIncludes, e.getKey()));
+                    List<String> excludes = splitCsv(get(relocationExcludes, e.getKey()));
+                    r.add(new Rule(e.getKey(), e.getValue(), includes, excludes));
                 }
             }
         }
@@ -74,6 +135,20 @@ final class Relocator {
         };
     }
 
+    private static String get(Map<String, String> map, String key) {
+        return map == null ? null : map.get(key);
+    }
+
+    private static List<String> splitCsv(String s) {
+        if (s == null || s.isEmpty()) return Collections.emptyList();
+        List<String> out = new ArrayList<>();
+        for (String part : s.split(",")) {
+            String trimmed = part.trim();
+            if (!trimmed.isEmpty()) out.add(trimmed);
+        }
+        return out;
+    }
+
     boolean isEmpty() {
         return rules.isEmpty();
     }
@@ -82,11 +157,12 @@ final class Relocator {
 
     /** Map a '/'-separated internal name or resource path by package prefix. */
     private String mapSlash(String name) {
+        String dotName = name.replace('/', '.');
         for (Rule rule : rules) {
+            boolean matchesPrefix = dotName.equals(rule.fromDot) || dotName.startsWith(rule.fromDot + ".");
+            if (!matchesPrefix || !rule.isEligible(dotName)) continue;
             if (name.equals(rule.fromSlash)) return rule.toSlash;
-            if (name.startsWith(rule.fromSlash + "/")) {
-                return rule.toSlash + name.substring(rule.fromSlash.length());
-            }
+            return rule.toSlash + name.substring(rule.fromSlash.length());
         }
         return name;
     }
@@ -94,10 +170,10 @@ final class Relocator {
     /** Map a '.'-separated (dotted) class name by package prefix. */
     private String mapDot(String name) {
         for (Rule rule : rules) {
+            boolean matchesPrefix = name.equals(rule.fromDot) || name.startsWith(rule.fromDot + ".");
+            if (!matchesPrefix || !rule.isEligible(name)) continue;
             if (name.equals(rule.fromDot)) return rule.toDot;
-            if (name.startsWith(rule.fromDot + ".")) {
-                return rule.toDot + name.substring(rule.fromDot.length());
-            }
+            return rule.toDot + name.substring(rule.fromDot.length());
         }
         return name;
     }

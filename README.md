@@ -89,6 +89,28 @@ shadedJar {
 }
 ```
 
+Scope a relocation to part of a package with an `include`/`exclude` block —
+e.g. to leave a public-API type or a reflectively-scanned annotation under its
+original name while relocating the rest:
+
+```gradle
+shadedJar {
+    relocate 'com.google.common', 'com.example.shaded.guava', {
+        exclude 'com.google.common.annotations.**'
+    }
+}
+```
+
+`include`/`exclude` take a small pattern language, not full Ant/Shadow-style
+globs: either an exact dotted class name (`'com.google.common.collect.ImmutableList'`)
+or a prefix wildcard (`'com.google.common.annotations.**'`, matching that
+package and everything nested under it). Excludes always win over includes;
+if any `include` patterns are given, only names matching at least one of them
+are relocated by that rule at all. A name a rule's prefix matches but its
+filter rejects falls through to the next (shorter-prefix) rule instead of
+being left alone outright, so an exclude can "un-relocate" a subpackage
+nested inside a broader rule.
+
 ```
 ./gradlew fatJar
 java -jar build/libs/<name>-<version>-all.jar
@@ -168,8 +190,9 @@ inputs → incremental (`UP-TO-DATE`) and build-cache friendly (`FROM-CACHE`).
   already-Zip64 dependency is rare enough that this is a minor missed
   optimization, not a correctness gap.
 - **Relocation is prefix-based**, applied to class bytecode, entry paths, string
-  constants, and service files. Per-relocation `include`/`exclude` filters and
-  multi-release-jar (`META-INF/versions/*`) awareness are not implemented yet.
+  constants, and service files, optionally scoped per rule with `include`/
+  `exclude` (see Usage above — a small pattern subset, not full Ant globs).
+  Multi-release-jar (`META-INF/versions/*`) awareness is not implemented yet.
 - **String-constant relocation is best-effort** (prefix match), like Shadow — a
   literal that merely starts with a relocated package but isn't a class name
   would also be rewritten.
@@ -195,13 +218,15 @@ summary).
 ## Layout
 
 - `plugin/` — the plugin (`com.ljarocki.shaded-jar`), an included build.
-  - `src/test/` — `RelocatorTest` (hermetic bytecode/path/service tests),
+  - `src/test/` — `RelocatorTest` (hermetic bytecode/path/service tests,
+    including include/exclude filtering and rule fallthrough),
     `SourcePackerTest` (verbatim compressed-stream copy), `Zip64SupportTest`
     (hermetic Zip64 byte-layout tests), `SpringPropertiesTest` (hermetic
     spring.factories/.handlers/.schemas merge + relocation semantics),
-    `PluginFunctionalTest`, `Zip64EntryCountFunctionalTest`, and
-    `SpringPropertiesFunctionalTest` (TestKit: builds and runs real fat/
-    shaded/Zip64-scale/Spring-Boot-flavored jars).
+    `PluginFunctionalTest`, `Zip64EntryCountFunctionalTest`,
+    `SpringPropertiesFunctionalTest`, and `RelocationFilterFunctionalTest`
+    (TestKit: builds and runs real fat/shaded/Zip64-scale/Spring-Boot-flavored/
+    filtered-relocation jars).
 - `sample/` — a runnable app applying shaded-jar + Shadow + a stock-Jar fat jar,
   demonstrating relocation and service merging.
 - `benchmark.sh` — timing harness.
