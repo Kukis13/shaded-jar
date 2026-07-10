@@ -5,6 +5,17 @@ plugins {
 group = 'com.ljarocki'
 version = '0.1.0'
 
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // ASM drives package relocation (bytecode rewriting). Gradle shades its own
+    // ASM under org.gradle.internal.impldep, so there is no clash with ours.
+    implementation 'org.ow2.asm:asm:9.7.1'
+    implementation 'org.ow2.asm:asm-commons:9.7.1'
+}
+
 java {
     // Keep the plugin runnable on older toolchains than the JDK that builds it.
     sourceCompatibility = JavaVersion.VERSION_1_8

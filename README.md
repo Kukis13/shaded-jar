@@ -1,34 +1,42 @@
 # shaded-jar
 
-A Gradle plugin that assembles **fat (uber) JARs** much faster than existing
-tooling by (re)compressing every dependency in **parallel** on Gradle's worker
-pool, instead of the single-threaded packaging that `Jar`/Shadow do today.
+A Gradle plugin that assembles **fat (uber) JARs and shaded JARs** much faster
+than existing tooling, by doing the two CPU-heavy stages — DEFLATE compression
+and ASM package relocation — **in parallel** on Gradle's worker pool, where
+`Jar`/Shadow run them single-threaded.
 
 - Plugin id: `com.ljarocki.shaded-jar`
 - Coordinates: `com.ljarocki:shaded-jar-plugin`
 
-> **Phase 1 (MVP): fat JAR only — no package relocation yet.** Shading (parallel
-> ASM relocation) is Phase 2. See [`PROJECT.md`](PROJECT.md) for the roadmap.
+Fat vs shaded is just configuration: **no `relocate(...)` rules → fat JAR; one or
+more → shaded JAR.** There is no separate flag.
 
 ## Results
 
 Sample app (`sample/`) bundling 11 real dependencies — guava, jackson, netty,
 lucene, bouncycastle, protobuf, jetty, h2, postgres, commons-math3 →
-**~19,700 entries, 32 MiB**. Archive step only (compile up-to-date, warm daemon,
-fixed per-invocation overhead subtracted, best of 6):
+**~19,700 entries, 32 MiB**, with Guava relocated to `com.example.shaded.guava`.
+Archive step only (compile up-to-date, warm daemon, fixed per-invocation overhead
+subtracted, best of 5):
 
-| task                    | archive step | vs shaded-jar | output size |
-| ----------------------- | -----------: | ------------: | ----------: |
-| **fatJar** (shaded-jar) |  **1871 ms** |          1.0× |   33.83 MB  |
-| shadowJar (Shadow)      |      3191 ms |         1.71× |   34.32 MB  |
-| stockFatJar (Gradle Jar)|      2637 ms |         1.41× |   33.99 MB  |
+| task                     | archive step | vs shaded-jar | output size |
+| ------------------------ | -----------: | ------------: | ----------: |
+| **fatJar** (shaded-jar)  |  **2018 ms** |          1.0× |   33.93 MB  |
+| shadowJar (Shadow)       |      5859 ms |         2.90× |   34.38 MB  |
+| stockFatJar (Gradle Jar)*|      2586 ms |            —  |   33.99 MB  |
 
-shaded-jar is ~1.7× faster than Shadow here and produces the smallest jar.
-Measured on Gradle 9.6.1, Shadow 9.5.1, JDK 21. Reproduce with
-`bash benchmark.sh` (numbers scale with core count and dependency size); your
-mileage varies.
+shaded-jar is **~2.9× faster than Shadow** with relocation on, and produces the
+smallest jar. Both `fatJar` and `shadowJar` relocate Guava and merge service
+files; relocation is nearly free for shaded-jar (2018 ms vs 1871 ms without it)
+because it happens inside the per-source parallel workers, whereas it almost
+doubled Shadow's time. Measured on Gradle 9.6.1, Shadow 9.5.1, JDK 21.
+
+\* Stock Gradle `Jar` cannot relocate, so it's shown only as a fat-jar floor, not
+a like-for-like shading comparison. Reproduce all of this with `bash benchmark.sh`.
 
 ## Usage
+
+Fat JAR (no relocation):
 
 ```gradle
 plugins {
@@ -37,8 +45,18 @@ plugins {
 }
 
 shadedJar {
-    mainClass = 'com.example.Main'   // written to the fat jar's manifest
+    mainClass = 'com.example.Main'
     archiveClassifier = 'all'        // -> build/libs/<name>-<version>-all.jar
+}
+```
+
+Shaded JAR — add relocation rules:
+
+```gradle
+shadedJar {
+    mainClass = 'com.example.Main'
+    relocate 'com.google.common', 'com.example.shaded.guava'
+    relocate 'org.apache.commons', 'com.example.shaded.commons'
 }
 ```
 
@@ -48,38 +66,42 @@ java -jar build/libs/<name>-<version>-all.jar
 ```
 
 When the `java` plugin is applied, `fatJar` is auto-wired to the project's main
-output plus its `runtimeClasspath`. You can also configure a `FatJarTask`
-manually (`classpath`, `archiveFile`, `mainClass`, `manifestAttributes`, `level`,
-`store`).
+output plus its `runtimeClasspath`.
 
 ## How it works
 
 1. **Enumerate sources** — project classes/resource dirs first (so their entries
    win duplicates), then each runtime dependency jar.
-2. **Parallel pack** — one Gradle worker per source re-compresses its entries
-   (raw DEFLATE) into a compact "part" file. This is the CPU-heavy stage that
-   stock tooling runs single-threaded.
+2. **Parallel pack** — one Gradle worker per source (re)compresses its entries and,
+   if relocation rules are set, rewrites each class with ASM's `ClassRemapper`
+   (type references, descriptors, string constants) and moves its entry path.
+   This is the CPU-heavy stage stock tooling runs single-threaded.
 3. **Assemble** — a single thread streams the parts into one valid, reproducible
-   JAR: first-wins duplicate handling, a freshly generated manifest, and
-   stripping of dependency manifests, signature files (`*.SF/.DSA/.RSA/.EC`) and
-   stale `INDEX.LIST`.
+   JAR: first-wins duplicate handling, **`META-INF/services/*` merged** across all
+   sources (deduped), a freshly generated manifest, and stripping of dependency
+   manifests, signature files (`*.SF/.DSA/.RSA/.EC`) and stale `INDEX.LIST`.
 
-Timestamps are normalized, so output is byte-reproducible. The task is
-`@CacheableTask` with `@Classpath` inputs → incremental (`UP-TO-DATE`) and
-build-cache friendly (`FROM-CACHE`).
+Service-file merging is **on by default** (Shadow requires an explicit
+`mergeServiceFiles()`), so `ServiceLoader`-based libraries — JDBC drivers, Jackson
+modules, etc. — keep working in the merged jar. Timestamps are normalized, so
+output is byte-reproducible. The task is `@CacheableTask` with `@Classpath`
+inputs → incremental (`UP-TO-DATE`) and build-cache friendly (`FROM-CACHE`).
 
-## Known limitations (Phase 1)
+## Known limitations
 
-- **No relocation / shading** — Phase 2.
 - **No Zip64** — fails fast with a clear error above 65,535 entries or 4 GiB.
-- **No transformer/merge API** — service-file (`META-INF/services/*`) merging and
-  Shadow-style transformers are Phase 2. Currently first-wins, so conflicting
-  service files are not concatenated.
-- Dependency entries are re-inflated then re-deflated. A future optimization is
-  copying already-compressed DEFLATE streams verbatim from source jars.
+- **Relocation is prefix-based**, applied to class bytecode, entry paths, string
+  constants, and service files. Per-relocation `include`/`exclude` filters and
+  multi-release-jar (`META-INF/versions/*`) awareness are not implemented yet.
+- **String-constant relocation is best-effort** (prefix match), like Shadow — a
+  literal that merely starts with a relocated package but isn't a class name
+  would also be rewritten.
+- Dependency entries are re-inflated then re-deflated; copying already-compressed
+  DEFLATE streams verbatim is a future optimization.
 
 ## Layout
 
 - `plugin/` — the plugin (`com.ljarocki.shaded-jar`), an included build.
-- `sample/` — a runnable app applying shaded-jar + Shadow + a stock-Jar fat jar.
+- `sample/` — a runnable app applying shaded-jar + Shadow + a stock-Jar fat jar,
+  demonstrating relocation and service merging.
 - `benchmark.sh` — timing harness.

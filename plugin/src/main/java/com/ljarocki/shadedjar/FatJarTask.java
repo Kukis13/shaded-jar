@@ -28,13 +28,18 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.jar.Attributes;
 import java.util.jar.Manifest;
 import java.util.regex.Pattern;
+import java.util.zip.DataFormatException;
+import java.util.zip.Inflater;
 
 /**
  * Builds a fat (uber) JAR by merging the project's own output and every runtime
@@ -42,10 +47,12 @@ import java.util.regex.Pattern;
  * Gradle's worker pool; a single assembler thread then streams the parts into a
  * valid, reproducible JAR with first-wins duplicate handling.
  *
- * <p>Phase 1 (MVP) scope: fat JAR only — no package relocation. Duplicate
- * strategy is first-wins in classpath order (so project classes beat deps).
- * Signature files and dependency manifests are stripped; a fresh manifest with
- * an optional {@code Main-Class} is generated.
+ * <p>With no {@link #getRelocations() relocations} this is a plain fat JAR; with
+ * relocations it is a shaded JAR (packages rewritten by ASM in the workers).
+ * Duplicate strategy is first-wins in classpath order (so project classes beat
+ * deps), except {@code META-INF/services/*} files, which are merged across all
+ * sources. Signature files and dependency manifests are stripped; a fresh
+ * manifest with an optional {@code Main-Class} is generated.
  */
 @CacheableTask
 public abstract class FatJarTask extends DefaultTask {
@@ -82,10 +89,19 @@ public abstract class FatJarTask extends DefaultTask {
     @Optional
     public abstract Property<Boolean> getStore();
 
+    /**
+     * Package relocations: source dotted prefix -> shaded dotted prefix. Empty
+     * (the default) means a plain fat JAR; any entry turns on shading.
+     */
+    @Input
+    @Optional
+    public abstract MapProperty<String, String> getRelocations();
+
     @Inject
     public abstract WorkerExecutor getWorkerExecutor();
 
     private static final int BUF = 1 << 16;
+    private static final String SERVICES = "META-INF/services/";
 
     /** META-INF/*.SF|DSA|RSA|EC and SIG-* — invalid once contents are repackaged. */
     private static final Pattern SIGNATURE =
@@ -95,6 +111,7 @@ public abstract class FatJarTask extends DefaultTask {
     public void run() throws Exception {
         int level = getLevel().getOrElse(-1);
         boolean store = getStore().getOrElse(false);
+        Map<String, String> relocations = getRelocations().getOrElse(Collections.emptyMap());
 
         // Resolve sources in declared order; keep only things that exist.
         List<File> sources = new ArrayList<>();
@@ -121,6 +138,7 @@ public abstract class FatJarTask extends DefaultTask {
                 p.getPart().set(part);
                 p.getLevel().set(level);
                 p.getStore().set(store);
+                p.getRelocations().set(relocations);
             });
         }
         queue.await();
@@ -160,6 +178,8 @@ public abstract class FatJarTask extends DefaultTask {
         outFile.getParentFile().mkdirs();
         List<CdEntry> central = new ArrayList<>();
         Set<String> seen = new HashSet<>();
+        // SPI files are merged, not first-wins: name -> ordered unique providers.
+        Map<String, LinkedHashSet<String>> services = new LinkedHashMap<>();
         long[] offset = {0};
 
         try (OutputStream raw = Files.newOutputStream(outFile.toPath());
@@ -189,6 +209,12 @@ public abstract class FatJarTask extends DefaultTask {
                         long compSize = din.readLong();
                         long rawSize = din.readLong();
 
+                        // Service files are accumulated and merged, not written now.
+                        if (isServiceFile(name)) {
+                            byte[] body = readEntryBytes(din, method, compSize, rawSize);
+                            accumulateService(services, name, body);
+                            continue;
+                        }
                         if (isFiltered(name) || !seen.add(name)) {
                             skipFully(din, compSize);
                             a.dropped++;
@@ -205,6 +231,16 @@ public abstract class FatJarTask extends DefaultTask {
                 }
             }
 
+            // Emit the merged service files (deterministic: sorted by name).
+            List<String> svcNames = new ArrayList<>(services.keySet());
+            Collections.sort(svcNames);
+            for (String svc : svcNames) {
+                if (!seen.add(svc)) continue;
+                StringBuilder sb = new StringBuilder();
+                for (String provider : services.get(svc)) sb.append(provider).append('\n');
+                writeStored(os, svc, sb.toString().getBytes(StandardCharsets.UTF_8), central, offset);
+            }
+
             long cdOffset = offset[0];
             byte[] cd = buildCentralDirectory(central, cdOffset);
             os.write(cd);
@@ -213,6 +249,43 @@ public abstract class FatJarTask extends DefaultTask {
 
         a.entryCount = central.size();
         return a;
+    }
+
+    private static boolean isServiceFile(String name) {
+        return name.startsWith(SERVICES) && name.length() > SERVICES.length();
+    }
+
+    /** Add a service file's providers (one per line, {@code #} comments ignored). */
+    private static void accumulateService(Map<String, LinkedHashSet<String>> services,
+                                          String name, byte[] body) {
+        LinkedHashSet<String> providers = services.computeIfAbsent(name, k -> new LinkedHashSet<>());
+        for (String line : new String(body, StandardCharsets.UTF_8).split("\n", -1)) {
+            int hash = line.indexOf('#');
+            String p = (hash >= 0 ? line.substring(0, hash) : line).trim();
+            if (!p.isEmpty()) providers.add(p);
+        }
+    }
+
+    /** Read one entry's payload, inflating if it was DEFLATE'd. */
+    private static byte[] readEntryBytes(DataInputStream din, int method, long compSize, long rawSize)
+            throws IOException {
+        byte[] comp = new byte[(int) compSize];
+        din.readFully(comp);
+        if (method == PartFormat.METHOD_STORE) return comp;
+        Inflater inflater = new Inflater(true);
+        inflater.setInput(comp);
+        byte[] out = new byte[(int) rawSize];
+        try {
+            int off = 0;
+            while (off < out.length && !inflater.finished()) {
+                off += inflater.inflate(out, off, out.length - off);
+            }
+            return out;
+        } catch (DataFormatException ex) {
+            throw new IOException("corrupt DEFLATE stream in part", ex);
+        } finally {
+            inflater.end();
+        }
     }
 
     private byte[] buildManifest() throws IOException {

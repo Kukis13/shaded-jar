@@ -39,6 +39,9 @@ application {
 shadedJar {
     mainClass = mainCls
     archiveClassifier = 'fast'
+    // Shading demo: move Guava into a private namespace. The project's own
+    // classes reference Guava too, so they get rewritten in lockstep.
+    relocate 'com.google.common', 'com.example.shaded.guava'
 }
 
 // --- Shadow (the benchmark to beat) ---
@@ -47,6 +50,11 @@ shadowJar {
     manifest {
         attributes 'Main-Class': mainCls
     }
+    // Same relocation as shaded-jar, so the comparison is apples-to-apples.
+    relocate 'com.google.common', 'com.example.shaded.guava'
+    // Shadow does NOT merge service files by default (shaded-jar does); enable it
+    // here so both produce a correct jar and the benchmark measures equal work.
+    mergeServiceFiles()
 }
 
 // --- Stock Gradle Jar building the same fat jar single-threaded (baseline) ---

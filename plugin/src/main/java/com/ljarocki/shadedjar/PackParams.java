@@ -1,6 +1,7 @@
 package com.ljarocki.shadedjar;
 
 import org.gradle.api.file.RegularFileProperty;
+import org.gradle.api.provider.MapProperty;
 import org.gradle.api.provider.Property;
 import org.gradle.workers.WorkParameters;
 
@@ -17,4 +18,7 @@ public interface PackParams extends WorkParameters {
 
     /** When true, STORE every entry instead of DEFLATE (fastest, larger output). */
     Property<Boolean> getStore();
+
+    /** Package relocations (source dotted prefix -> shaded dotted prefix); empty = fat jar. */
+    MapProperty<String, String> getRelocations();
 }

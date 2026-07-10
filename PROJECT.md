@@ -55,11 +55,18 @@ archive.
   Gradle plugin (`com.ljarocki.shaded-jar`) builds fat JARs by re-compressing every
   dependency in parallel on the Worker API, then assembling the parts
   single-threaded (first-wins dedup, generated manifest, signature stripping,
-  reproducible timestamps, `@CacheableTask` incrementality). On an ~19.7k-entry /
-  32 MiB sample it archives in **1871 ms vs Shadow's 3191 ms (~1.7×)** and stock
-  Gradle Jar's 2637 ms, producing the smallest jar (measured on Gradle 9.6.1,
-  Shadow 9.5.1, JDK 21). Reuses the parallel-Deflate + ZIP-writing engine from
-  `ELEGANT_ZIP`. See [`README.md`](README.md).
+  reproducible timestamps, `@CacheableTask` incrementality). Reuses the
+  parallel-Deflate + ZIP-writing engine from `ELEGANT_ZIP`.
+- **Phase 2 (Shading): DONE (core)** — package relocation via ASM
+  (`ClassRemapper`) runs inside the per-source parallel workers: class bytecode,
+  entry paths, string constants and `META-INF/services/*` file names/contents are
+  all rewritten. Service files are merged by default (Shadow needs an explicit
+  `mergeServiceFiles()`). Configured with `relocate 'from', 'to'` — no rules means
+  a plain fat jar. On the ~19.7k-entry / 32 MiB sample **with Guava relocated**, it
+  archives in **2018 ms vs Shadow's 5859 ms (~2.9×)** — relocation is nearly free
+  here (2018 vs 1871 ms) because it is parallelized, while it roughly doubled
+  Shadow's time. Measured on Gradle 9.6.1, Shadow 9.5.1, JDK 21. Not yet: per-rule
+  include/exclude, multi-release jars, Zip64. See [`README.md`](README.md).
 
 ## Design decisions
 
@@ -83,7 +90,7 @@ archive.
    benchmark vs. Shadow and plain `jar`. **[done]**
 2. **Shading**: parallel relocation with ASM; merge-strategy support
    (service files, duplicate handling) — correctness parity with Shadow's
-   common cases.
+   common cases. **[core done; remaining: per-rule include/exclude, MR-jars]**
 3. **Maven plugin** sharing the same core engine.
 4. **Longer term**: the same engine points at container image layers
    (tar+gzip) — the Jib-successor space
