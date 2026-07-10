@@ -12,10 +12,7 @@ import org.gradle.api.tasks.Input;
 import org.gradle.api.tasks.Optional;
 import org.gradle.api.tasks.OutputFile;
 import org.gradle.api.tasks.TaskAction;
-import org.gradle.workers.WorkQueue;
-import org.gradle.workers.WorkerExecutor;
 
-import javax.inject.Inject;
 import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
 import java.io.EOFException;
@@ -35,6 +32,10 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.jar.Attributes;
 import java.util.jar.Manifest;
 import java.util.regex.Pattern;
@@ -43,9 +44,10 @@ import java.util.zip.Inflater;
 
 /**
  * Builds a fat (uber) JAR by merging the project's own output and every runtime
- * dependency into one archive. Each source is (re)compressed in parallel on
- * Gradle's worker pool; a single assembler thread then streams the parts into a
- * valid, reproducible JAR with first-wins duplicate handling.
+ * dependency into one archive. Each source is (re)compressed in parallel on an
+ * internal thread pool sized by {@link #getThreads()} (default = CPU count;
+ * {@code 1} = fully sequential); a single assembler thread then streams the parts
+ * into a valid, reproducible JAR with first-wins duplicate handling.
  *
  * <p>With no {@link #getRelocations() relocations} this is a plain fat JAR; with
  * relocations it is a shaded JAR (packages rewritten by ASM in the workers).
@@ -97,8 +99,10 @@ public abstract class FatJarTask extends DefaultTask {
     @Optional
     public abstract MapProperty<String, String> getRelocations();
 
-    @Inject
-    public abstract WorkerExecutor getWorkerExecutor();
+    /** Max worker threads for the parallel pack stage; default = CPU count, {@code 1} = sequential. */
+    @Input
+    @Optional
+    public abstract Property<Integer> getThreads();
 
     private static final int BUF = 1 << 16;
     private static final String SERVICES = "META-INF/services/";
@@ -112,6 +116,7 @@ public abstract class FatJarTask extends DefaultTask {
         int level = getLevel().getOrElse(-1);
         boolean store = getStore().getOrElse(false);
         Map<String, String> relocations = getRelocations().getOrElse(Collections.emptyMap());
+        int threads = Math.max(1, getThreads().getOrElse(Runtime.getRuntime().availableProcessors()));
 
         // Resolve sources in declared order; keep only things that exist.
         List<File> sources = new ArrayList<>();
@@ -126,22 +131,26 @@ public abstract class FatJarTask extends DefaultTask {
 
         long t0 = System.nanoTime();
 
-        // --- Parallel phase: one worker per source ---
-        WorkQueue queue = getWorkerExecutor().noIsolation();
+        // --- Parallel phase: one task per source on a fixed pool (threads=1 -> sequential) ---
+        SourcePacker packer = new SourcePacker(level, store, relocations);
         List<File> parts = new ArrayList<>(sources.size());
         for (int i = 0; i < sources.size(); i++) {
-            final File src = sources.get(i);
-            final File part = new File(partsDir, i + ".part");
-            parts.add(part);
-            queue.submit(PackAction.class, p -> {
-                p.getSource().set(src);
-                p.getPart().set(part);
-                p.getLevel().set(level);
-                p.getStore().set(store);
-                p.getRelocations().set(relocations);
-            });
+            parts.add(new File(partsDir, i + ".part"));
         }
-        queue.await();
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        try {
+            List<Future<?>> futures = new ArrayList<>(sources.size());
+            for (int i = 0; i < sources.size(); i++) {
+                final File src = sources.get(i);
+                final File part = parts.get(i);
+                futures.add(pool.submit(() -> { packer.pack(src, part); return null; }));
+            }
+            for (Future<?> f : futures) f.get(); // wait + surface failures
+        } catch (ExecutionException ee) {
+            throw new GradleException("shaded-jar: packing failed", ee.getCause());
+        } finally {
+            pool.shutdown();
+        }
         long tPack = System.nanoTime();
 
         // --- Sequential phase: assemble parts into one jar ---
@@ -151,9 +160,9 @@ public abstract class FatJarTask extends DefaultTask {
         deleteRecursively(partsDir);
         getLogger().lifecycle(String.format(
                 "shaded-jar: %d sources -> %d entries, %.1f MiB  (dropped %d dup/filtered)  "
-                        + "pack=%.0fms assemble=%.0fms TOTAL=%.0fms",
+                        + "threads=%d pack=%.0fms assemble=%.0fms TOTAL=%.0fms",
                 sources.size(), a.entryCount, a.archiveSize / 1048576.0, a.dropped,
-                (tPack - t0) / 1e6, (tEnd - tPack) / 1e6, (tEnd - t0) / 1e6));
+                threads, (tPack - t0) / 1e6, (tEnd - tPack) / 1e6, (tEnd - t0) / 1e6));
     }
 
     private static final class Assembly {

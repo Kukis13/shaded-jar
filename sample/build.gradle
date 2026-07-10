@@ -41,7 +41,15 @@ shadedJar {
     archiveClassifier = 'fast'
     // Shading demo: move Guava into a private namespace. The project's own
     // classes reference Guava too, so they get rewritten in lockstep.
-    relocate 'com.google.common', 'com.example.shaded.guava'
+    // -PnoRelocate skips this so the benchmark can time a plain fat jar too.
+    if (!project.hasProperty('noRelocate')) {
+        relocate 'com.google.common', 'com.example.shaded.guava'
+    }
+}
+
+// Let the benchmark pin the pack thread count, e.g. -PshadeThreads=1.
+if (project.hasProperty('shadeThreads')) {
+    tasks.named('fatJar') { threads = Integer.parseInt(project.property('shadeThreads')) }
 }
 
 // --- Shadow (the benchmark to beat) ---

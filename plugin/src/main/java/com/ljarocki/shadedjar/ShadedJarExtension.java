@@ -28,6 +28,9 @@ public abstract class ShadedJarExtension {
     /** Package relocations: source dotted prefix -> shaded dotted prefix. */
     public abstract MapProperty<String, String> getRelocations();
 
+    /** Max worker threads for packing; default = CPU count, {@code 1} = sequential. */
+    public abstract Property<Integer> getThreads();
+
     /** DSL sugar: {@code relocate 'com.google.common', 'shaded.guava'}. */
     public void relocate(String pattern, String destination) {
         getRelocations().put(pattern, destination);

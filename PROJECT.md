@@ -102,9 +102,29 @@ archive.
   `com.ljarocki`. Single plugin, both fat and shaded (see Design decisions).
 - License — resolved: Apache-2.0 (`LICENSE` in repo).
 - Minimum supported Gradle version — developed/tested on 9.6.1; plugin compiles
-  to Java 8 bytecode and uses only stable Worker/Provider APIs, so it should
-  support Gradle 8+. Confirm the floor with a matrix test before publishing.
+  to Java 8 bytecode and uses only stable Provider APIs, so it should support
+  Gradle 8+. Confirm the floor with a matrix test before publishing.
 - How much of Shadow's transformer API surface to support at Phase 2 (service
   files `META-INF/services/*` merging is table stakes; broader transformers TBD).
 - Whether incremental Deflate (per-entry caching of compressed bytes) pays off
   vs. just parallelism — measure first.
+
+### Threading & the single-thread benchmark (2026-07-10)
+
+Packing moved off Gradle's Worker API onto an internal fixed thread pool sized by
+a new `threads` property (default = CPU count, `1` = sequential), so concurrency
+is controllable per-task. The single-thread benchmark is revealing:
+
+- **vs Shadow, shaded-jar is faster even at `threads=1`** (~3.7 s vs ~5.7 s): the
+  core packing/assembly beats Shadow independent of parallelism; parallelism then
+  adds ~1.9× on 12 cores.
+- **vs stock Gradle `Jar` (plain fat), shaded-jar is ~1.2× *slower* at `threads=1`**
+  (~3.1 s vs ~2.5 s): the per-source part-file round-trip + full re-inflate/
+  re-deflate cost more single-threaded than Gradle's direct streaming, so our lead
+  over stock is purely parallelism.
+
+Takeaway: **copying already-compressed DEFLATE streams verbatim** (skip re-deflate
+for unchanged dependency entries) is now the highest-value next optimization — it
+would cut the single-thread cost and widen the parallel lead. Trade-off vs the
+Worker API: we no longer honor Gradle's build-wide `--max-workers` throttle, so a
+massively parallel multi-module build could oversubscribe; `threads` is the knob.

@@ -31,6 +31,7 @@ public class ShadedJarPlugin implements Plugin<Project> {
                     task.setDescription("Assembles a fat (uber) JAR with shaded-jar.");
                     task.getMainClass().convention(ext.getMainClass());
                     task.getRelocations().convention(ext.getRelocations());
+                    task.getThreads().convention(ext.getThreads());
                     task.getArchiveFile().convention(
                             project.getLayout().getBuildDirectory().file(
                                     project.provider(() -> "libs/" + archiveName(project, ext))));

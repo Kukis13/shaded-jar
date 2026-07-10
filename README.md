@@ -34,6 +34,30 @@ doubled Shadow's time. Measured on Gradle 9.6.1, Shadow 9.5.1, JDK 21.
 \* Stock Gradle `Jar` cannot relocate, so it's shown only as a fat-jar floor, not
 a like-for-like shading comparison. Reproduce all of this with `bash benchmark.sh`.
 
+### Single thread: algorithm vs parallelism
+
+Setting `threads = 1` isolates the core algorithm from the parallelism win. Net
+archive step, best of 5, same sample:
+
+| scenario                         | archive step |
+| -------------------------------- | -----------: |
+| shaded, all cores  (shaded-jar)  |     1931 ms  |
+| shaded, 1 thread   (shaded-jar)  |     3691 ms  |
+| shaded             (Shadow)      |     5679 ms  |
+| fat, 1 thread      (shaded-jar)  |     3075 ms  |
+| fat                (Gradle Jar)  |     2488 ms  |
+
+- **vs Shadow, shaded-jar is faster even on one thread** (3691 vs 5679 ms, ~1.5×):
+  the core packing/assembly is more efficient, and parallelism then adds ~1.9× on
+  top (3691 → 1931 on 12 cores — sub-linear because assembly is single-threaded
+  and a few large jars dominate the pack stage).
+- **vs stock Gradle `Jar` (plain fat), shaded-jar is ~1.2× *slower* on one thread**
+  (3075 vs 2488 ms). Our per-source "part file" intermediate (write to disk, read
+  back) plus full re-inflate/re-deflate cost more single-threaded than Gradle's
+  direct streaming — so the lead over stock is *purely* parallelism. Copying
+  already-compressed DEFLATE streams verbatim (a planned optimization) would close
+  this gap.
+
 ## Usage
 
 Fat JAR (no relocation):
@@ -57,6 +81,7 @@ shadedJar {
     mainClass = 'com.example.Main'
     relocate 'com.google.common', 'com.example.shaded.guava'
     relocate 'org.apache.commons', 'com.example.shaded.commons'
+    // threads = 1   // optional: cap the pack pool (default = CPU count)
 }
 ```
 
@@ -66,15 +91,17 @@ java -jar build/libs/<name>-<version>-all.jar
 ```
 
 When the `java` plugin is applied, `fatJar` is auto-wired to the project's main
-output plus its `runtimeClasspath`.
+output plus its `runtimeClasspath`. The pack stage runs on an internal thread pool
+sized by `threads` (default = available processors, `1` = fully sequential).
 
 ## How it works
 
 1. **Enumerate sources** — project classes/resource dirs first (so their entries
    win duplicates), then each runtime dependency jar.
-2. **Parallel pack** — one Gradle worker per source (re)compresses its entries and,
-   if relocation rules are set, rewrites each class with ASM's `ClassRemapper`
-   (type references, descriptors, string constants) and moves its entry path.
+2. **Parallel pack** — one task per source, on an internal fixed thread pool
+   (size = `threads`), (re)compresses its entries and, if relocation rules are set,
+   rewrites each class with ASM's `ClassRemapper` (type references, descriptors,
+   string constants) and moves its entry path.
    This is the CPU-heavy stage stock tooling runs single-threaded.
 3. **Assemble** — a single thread streams the parts into one valid, reproducible
    JAR: first-wins duplicate handling, **`META-INF/services/*` merged** across all

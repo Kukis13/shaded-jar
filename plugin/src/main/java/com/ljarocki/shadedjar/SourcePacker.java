@@ -1,7 +1,5 @@
 package com.ljarocki.shadedjar;
 
-import org.gradle.workers.WorkAction;
-
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
@@ -17,55 +15,59 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Enumeration;
 import java.util.List;
+import java.util.Map;
 import java.util.zip.CRC32;
 import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
 /**
- * One unit of parallel work: read a single source (a dependency JAR or a
- * classes/resource directory) and write a "part" file holding one record per
- * file entry (see {@link PartFormat}).
+ * Packs one source (a dependency JAR or a classes/resource directory) into a
+ * "part" file holding one record per file entry (see {@link PartFormat}). This is
+ * where the CPU-heavy work lives — DEFLATE and, when relocating, ASM bytecode
+ * rewriting.
  *
- * <p>The CPU-heavy DEFLATE (and, when relocating, ASM bytecode rewriting) happens
- * here, so Gradle's worker pool (sized by {@code --max-workers} /
- * {@code org.gradle.workers.max}) spreads it across cores with one whole source
- * per worker. Dependency JARs are re-inflated then re-deflated; this keeps the
- * assembler trivial and is what actually gets parallelized versus stock
- * single-threaded packaging.
+ * <p>Instances are stateless beyond their config, so {@link #pack} may be called
+ * concurrently for different sources: each call uses its own {@link Deflater} and
+ * {@link Relocator}. {@link FatJarTask} runs one call per source on a fixed thread
+ * pool whose size is the {@code threads} property (1 = fully sequential).
  */
-public abstract class PackAction implements WorkAction<PackParams> {
+final class SourcePacker {
 
     private static final int BUF = 1 << 16;
     private static final String SERVICES = "META-INF/services/";
 
-    @Override
-    public void execute() {
-        File source = getParameters().getSource().getAsFile().get();
-        File part = getParameters().getPart().getAsFile().get();
-        int level = getParameters().getLevel().get();
-        boolean store = getParameters().getStore().get();
-        Relocator relocator = new Relocator(getParameters().getRelocations().get());
+    private final int level;
+    private final boolean store;
+    private final Map<String, String> relocations;
 
+    SourcePacker(int level, boolean store, Map<String, String> relocations) {
+        this.level = level;
+        this.store = store;
+        this.relocations = relocations;
+    }
+
+    void pack(File source, File part) throws IOException {
+        Relocator relocator = new Relocator(relocations);
         try (OutputStream fos = Files.newOutputStream(part.toPath());
              DataOutputStream out = new DataOutputStream(new BufferedOutputStream(fos, 1 << 20))) {
             Deflater deflater = new Deflater(level, true);
             try {
                 if (source.isDirectory()) {
-                    packDirectory(source.toPath(), out, deflater, store, relocator);
+                    packDirectory(source.toPath(), out, deflater, relocator);
                 } else {
-                    packJar(source, out, deflater, store, relocator);
+                    packJar(source, out, deflater, relocator);
                 }
             } finally {
                 deflater.end();
             }
         } catch (IOException ex) {
-            throw new RuntimeException("shaded-jar: failed packing " + source, ex);
+            throw new IOException("shaded-jar: failed packing " + source, ex);
         }
     }
 
-    private void packDirectory(Path root, DataOutputStream out, Deflater deflater, boolean store,
-                               Relocator relocator) throws IOException {
+    private void packDirectory(Path root, DataOutputStream out, Deflater deflater, Relocator relocator)
+            throws IOException {
         List<Path> files = new ArrayList<>();
         try (java.util.stream.Stream<Path> walk = Files.walk(root)) {
             walk.filter(Files::isRegularFile).forEach(files::add);
@@ -74,12 +76,12 @@ public abstract class PackAction implements WorkAction<PackParams> {
         files.sort(Comparator.naturalOrder());
         for (Path p : files) {
             String name = root.relativize(p).toString().replace('\\', '/');
-            processEntry(out, name, Files.readAllBytes(p), deflater, store, relocator);
+            processEntry(out, name, Files.readAllBytes(p), deflater, relocator);
         }
     }
 
-    private void packJar(File jar, DataOutputStream out, Deflater deflater, boolean store,
-                         Relocator relocator) throws IOException {
+    private void packJar(File jar, DataOutputStream out, Deflater deflater, Relocator relocator)
+            throws IOException {
         try (ZipFile zf = new ZipFile(jar)) {
             Enumeration<? extends ZipEntry> entries = zf.entries();
             byte[] buf = new byte[BUF];
@@ -87,7 +89,7 @@ public abstract class PackAction implements WorkAction<PackParams> {
                 ZipEntry e = entries.nextElement();
                 if (e.isDirectory()) continue;
                 byte[] raw = readFully(zf.getInputStream(e), buf, (int) Math.max(0, e.getSize()));
-                processEntry(out, e.getName(), raw, deflater, store, relocator);
+                processEntry(out, e.getName(), raw, deflater, relocator);
             }
         }
     }
@@ -97,7 +99,7 @@ public abstract class PackAction implements WorkAction<PackParams> {
      * are always STORE'd so the assembler can read and merge them cheaply.
      */
     private void processEntry(DataOutputStream out, String name, byte[] raw, Deflater deflater,
-                              boolean store, Relocator relocator) throws IOException {
+                              Relocator relocator) throws IOException {
         boolean isService = name.startsWith(SERVICES) && name.length() > SERVICES.length();
         String outName = name;
         byte[] data = raw;
@@ -119,13 +121,13 @@ public abstract class PackAction implements WorkAction<PackParams> {
 
     /** Compress {@code raw} and append one record to the part stream. */
     private void writeRecord(DataOutputStream out, String name, byte[] raw, Deflater deflater,
-                             boolean store) throws IOException {
+                             boolean forceStore) throws IOException {
         CRC32 crc = new CRC32();
         crc.update(raw);
 
         int method;
         byte[] payload;
-        if (store || raw.length == 0) {
+        if (forceStore || raw.length == 0) {
             method = PartFormat.METHOD_STORE;
             payload = raw;
         } else {
