@@ -8,7 +8,7 @@ pool, instead of the single-threaded packaging that `Jar`/Shadow do today.
 - Coordinates: `com.ljarocki:shaded-jar-plugin`
 
 > **Phase 1 (MVP): fat JAR only — no package relocation yet.** Shading (parallel
-> ASM relocation) is Phase 2. See [`../PROJECT.md`](../PROJECT.md) for the roadmap.
+> ASM relocation) is Phase 2. See [`PROJECT.md`](PROJECT.md) for the roadmap.
 
 ## Results
 

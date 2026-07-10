@@ -51,7 +51,7 @@ archive.
 
 ## Status
 
-- **Phase 1 (MVP): DONE** — implemented in [`fast-shade/`](fast-shade/). A real
+- **Phase 1 (MVP): DONE** — the plugin lives at the repo root. A real
   Gradle plugin (`com.ljarocki.shaded-jar`) builds fat JARs by re-compressing every
   dependency in parallel on the Worker API, then assembling the parts
   single-threaded (first-wins dedup, generated manifest, signature stripping,
@@ -59,7 +59,7 @@ archive.
   32 MiB sample it archives in **1871 ms vs Shadow's 3191 ms (~1.7×)** and stock
   Gradle Jar's 2637 ms, producing the smallest jar (measured on Gradle 9.6.1,
   Shadow 9.5.1, JDK 21). Reuses the parallel-Deflate + ZIP-writing engine from
-  `ELEGANT_ZIP`. See [`fast-shade/README.md`](fast-shade/README.md).
+  `ELEGANT_ZIP`. See [`README.md`](README.md).
 
 ## Design decisions
 
