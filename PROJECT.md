@@ -61,6 +61,22 @@ archive.
   Shadow 9.5.1, JDK 21). Reuses the parallel-Deflate + ZIP-writing engine from
   `ELEGANT_ZIP`. See [`fast-shade/README.md`](fast-shade/README.md).
 
+## Design decisions
+
+- **One repo, one plugin.** Shading is a *superset* of fat-jarring — the same
+  enumerate → parallel-pack → assemble pipeline, plus one relocation stage. So a
+  single plugin (`com.ljarocki.shaded-jar`) with a single task produces both.
+  Matches Shadow and maven-shade, where "shade" is the umbrella term for
+  uber-jar assembly with optional relocation. No second plugin, no second repo.
+- **Fat vs shaded = presence of relocation rules, not a boolean.** A
+  `shaded = true` flag can't express *what* to relocate and *where*; and
+  "relocate everything" is a reflection/resources/service-file footgun. So: no
+  `relocate(...)` rules → fat jar (Phase 1 behavior); one or more rules → shaded
+  jar (Phase 2). This is the Shadow model.
+- **Grow into a monorepo when Maven lands.** Split into `core/` (engine, no
+  build-tool types) + `gradle-plugin/` + `maven-plugin/` at Phase 3 — one repo,
+  multiple modules. Not before; today's single `plugin/` is fine.
+
 ## Scope / phases
 
 1. **MVP**: fat JAR (no relocation) with parallel + incremental assembly;
@@ -75,8 +91,13 @@ archive.
 
 ## Open questions
 
-- Plugin name / coordinates — resolved: id `com.ljarocki.shaded-jar`, group `com.ljarocki`.
-- How much of Shadow's transformer API surface to support at MVP.
+- Plugin name / coordinates — resolved: id `com.ljarocki.shaded-jar`, group
+  `com.ljarocki`. Single plugin, both fat and shaded (see Design decisions).
+- License — resolved: Apache-2.0 (`LICENSE` in repo).
+- Minimum supported Gradle version — developed/tested on 9.6.1; plugin compiles
+  to Java 8 bytecode and uses only stable Worker/Provider APIs, so it should
+  support Gradle 8+. Confirm the floor with a matrix test before publishing.
+- How much of Shadow's transformer API surface to support at Phase 2 (service
+  files `META-INF/services/*` merging is table stakes; broader transformers TBD).
 - Whether incremental Deflate (per-entry caching of compressed bytes) pays off
   vs. just parallelism — measure first.
-- License (Apache-2.0 default) and minimum supported Gradle version.
