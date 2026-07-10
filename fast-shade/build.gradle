@@ -1,0 +1,2 @@
+// Root aggregator build. The plugin is an included build (see settings.gradle);
+// the sample subproject applies it and benchmarks it against Shadow / plain jar.

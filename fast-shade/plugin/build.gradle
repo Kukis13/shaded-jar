@@ -1,0 +1,23 @@
+plugins {
+    id 'java-gradle-plugin'
+}
+
+group = 'com.ljarocki'
+version = '0.1.0'
+
+java {
+    // Keep the plugin runnable on older toolchains than the JDK that builds it.
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+}
+
+gradlePlugin {
+    plugins {
+        shadedJar {
+            id = 'com.ljarocki.shaded-jar'
+            implementationClass = 'com.ljarocki.shadedjar.ShadedJarPlugin'
+            displayName = 'shaded-jar'
+            description = 'Fast, parallel fat/shaded JAR assembly for Gradle'
+        }
+    }
+}

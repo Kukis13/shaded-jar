@@ -1,0 +1,70 @@
+plugins {
+    id 'java'
+    id 'application'
+    id 'com.ljarocki.shaded-jar'
+    id 'com.gradleup.shadow' version '8.3.5'
+}
+
+group = 'com.example'
+version = '1.0.0'
+
+repositories {
+    mavenCentral()
+}
+
+def mainCls = 'com.example.Main'
+
+dependencies {
+    // A spread of real, large dependencies so the fat jar has tens of thousands
+    // of class entries — enough that the archive step dominates and parallel
+    // packing actually shows.
+    implementation 'com.google.guava:guava:33.0.0-jre'
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.16.1'
+    implementation 'org.apache.commons:commons-math3:3.6.1'
+    implementation 'com.h2database:h2:2.2.224'
+    implementation 'io.netty:netty-all:4.1.106.Final'
+    implementation 'org.apache.lucene:lucene-core:9.9.1'
+    implementation 'org.apache.lucene:lucene-analysis-common:9.9.1'
+    implementation 'com.google.protobuf:protobuf-java:3.25.2'
+    implementation 'org.bouncycastle:bcprov-jdk18on:1.77'
+    implementation 'org.postgresql:postgresql:42.7.1'
+    implementation 'org.eclipse.jetty:jetty-server:11.0.20'
+}
+
+application {
+    mainClass = mainCls
+}
+
+// --- shaded-jar (this plugin) ---
+shadedJar {
+    mainClass = mainCls
+    archiveClassifier = 'fast'
+}
+
+// --- Shadow (the benchmark to beat) ---
+shadowJar {
+    archiveClassifier = 'shadow'
+    manifest {
+        attributes 'Main-Class': mainCls
+    }
+}
+
+// --- Stock Gradle Jar building the same fat jar single-threaded (baseline) ---
+tasks.register('stockFatJar', Jar) {
+    archiveClassifier = 'stock'
+    manifest {
+        attributes 'Main-Class': mainCls
+    }
+    from sourceSets.main.output
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+// A do-nothing task used to measure the fixed per-invocation overhead (daemon
+// roundtrip + task-graph setup), so the benchmark can subtract it and report the
+// actual archive-step cost. See benchmark.sh.
+tasks.register('benchNoop') {
+    doLast { }
+}

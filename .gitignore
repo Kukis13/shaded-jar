@@ -1,0 +1,15 @@
+# Gradle
+.gradle/
+build/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Keep the wrapper jar (needed to build); everything else under build/ is ignored
+!gradle/wrapper/gradle-wrapper.jar

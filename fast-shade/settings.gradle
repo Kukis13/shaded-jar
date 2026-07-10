@@ -1,0 +1,14 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+
+// The plugin lives in an included build so the sample can apply it by id
+// (com.fastshade) exactly as a real consumer would, with no publishing step.
+includeBuild 'plugin'
+
+rootProject.name = 'shaded-jar'
+
+include 'sample'
