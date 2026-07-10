@@ -1,6 +1,8 @@
 # shaded-jar
 
 [![CI](https://github.com/Kukis13/shaded-jar/actions/workflows/ci.yml/badge.svg)](https://github.com/Kukis13/shaded-jar/actions/workflows/ci.yml)
+[![Gradle 8 | 9](https://img.shields.io/badge/Gradle-8%20%7C%209-02303A?logo=gradle&logoColor=white)](plugin/src/test/java/com/ljarocki/shadedjar/GradleVersionCompatibilityFunctionalTest.java)
+[![Configuration Cache](https://img.shields.io/badge/Configuration%20Cache-compatible-02303A?logo=gradle&logoColor=white)](plugin/src/test/java/com/ljarocki/shadedjar/ConfigurationCacheFunctionalTest.java)
 
 A Gradle plugin that assembles **fat (uber) JARs and shaded JARs** much faster
 than existing tooling, by doing the two CPU-heavy stages — DEFLATE compression
@@ -203,6 +205,23 @@ inputs → incremental (`UP-TO-DATE`) and build-cache friendly (`FROM-CACHE`).
   transparently falls back to the normal decode/recompress path, so this is a
   pure performance optimization with no effect on correctness.
 
+## Compatibility
+
+- **Gradle 8 and 9** — `GradleVersionCompatibilityFunctionalTest` runs a real
+  fat/shaded build against Gradle 8.5 and 9.6.1 explicitly (via TestKit's
+  `withGradleVersion`, independent of whatever version the wrapper pins).
+  8.5, not 8.0, is the actual floor tested: it's the earliest Gradle 8.x
+  release that runs on a JDK 21 daemon, which is what this project's CI uses.
+  The plugin's own bytecode targets Java 8 and only uses Provider/Worker APIs
+  stable since well before Gradle 8, so nothing here suggests true 8.0–8.4
+  would behave differently — it's just genuinely untested, rather than "known
+  to work."
+- **Configuration cache** — `ConfigurationCacheFunctionalTest` runs `fatJar
+  --configuration-cache` twice per Gradle version above: once to store the
+  cache, once more (no changes) to confirm it's actually *reused*, not just
+  that the first run didn't complain. Both major versions pass with no
+  reported problems.
+
 ## Development
 
 ```
@@ -224,9 +243,11 @@ summary).
     (hermetic Zip64 byte-layout tests), `SpringPropertiesTest` (hermetic
     spring.factories/.handlers/.schemas merge + relocation semantics),
     `PluginFunctionalTest`, `Zip64EntryCountFunctionalTest`,
-    `SpringPropertiesFunctionalTest`, and `RelocationFilterFunctionalTest`
-    (TestKit: builds and runs real fat/shaded/Zip64-scale/Spring-Boot-flavored/
-    filtered-relocation jars).
+    `SpringPropertiesFunctionalTest`, `RelocationFilterFunctionalTest`,
+    `GradleVersionCompatibilityFunctionalTest`, and
+    `ConfigurationCacheFunctionalTest` (TestKit: builds and runs real fat/
+    shaded/Zip64-scale/Spring-Boot-flavored/filtered-relocation jars, the
+    latter two explicitly against both Gradle 8.5 and 9.6.1).
 - `sample/` — a runnable app applying shaded-jar + Shadow + a stock-Jar fat jar,
   demonstrating relocation and service merging.
 - `benchmark.sh` — timing harness.
