@@ -14,12 +14,25 @@ dependencies {
     // ASM under org.gradle.internal.impldep, so there is no clash with ours.
     implementation 'org.ow2.asm:asm:9.7.1'
     implementation 'org.ow2.asm:asm-commons:9.7.1'
+
+    testImplementation platform('org.junit:junit-bom:5.10.2')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
+    testImplementation gradleTestKit()   // functional tests drive a real Gradle build
 }
 
 java {
     // Keep the plugin runnable on older toolchains than the JDK that builds it.
     sourceCompatibility = JavaVersion.VERSION_1_8
     targetCompatibility = JavaVersion.VERSION_1_8
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    testLogging {
+        events 'passed', 'failed', 'skipped'
+        exceptionFormat = 'full'
+    }
 }
 
 gradlePlugin {

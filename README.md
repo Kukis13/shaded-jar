@@ -1,5 +1,7 @@
 # shaded-jar
 
+[![CI](https://github.com/Kukis13/shaded-jar/actions/workflows/ci.yml/badge.svg)](https://github.com/Kukis13/shaded-jar/actions/workflows/ci.yml)
+
 A Gradle plugin that assembles **fat (uber) JARs and shaded JARs** much faster
 than existing tooling, by doing the two CPU-heavy stages — DEFLATE compression
 and ASM package relocation — **in parallel** on Gradle's worker pool, where
@@ -126,9 +128,23 @@ inputs → incremental (`UP-TO-DATE`) and build-cache friendly (`FROM-CACHE`).
 - Dependency entries are re-inflated then re-deflated; copying already-compressed
   DEFLATE streams verbatim is a future optimization.
 
+## Development
+
+```
+./gradlew -p plugin test     # unit (Relocator) + functional (TestKit) tests
+./gradlew :sample:fatJar     # build the sample shaded jar
+bash benchmark.sh            # local timing harness (uses `gradle`; GRADLE=./gradlew to pin)
+```
+
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the tests on every
+push and PR, and the benchmark on pushes to `main` (results land in the run's job
+summary).
+
 ## Layout
 
 - `plugin/` — the plugin (`com.ljarocki.shaded-jar`), an included build.
+  - `src/test/` — `RelocatorTest` (hermetic bytecode/path/service tests) and
+    `PluginFunctionalTest` (TestKit: builds and runs real fat/shaded jars).
 - `sample/` — a runnable app applying shaded-jar + Shadow + a stock-Jar fat jar,
   demonstrating relocation and service merging.
 - `benchmark.sh` — timing harness.

@@ -57,6 +57,11 @@ archive.
   single-threaded (first-wins dedup, generated manifest, signature stripping,
   reproducible timestamps, `@CacheableTask` incrementality). Reuses the
   parallel-Deflate + ZIP-writing engine from `ELEGANT_ZIP`.
+- **Tests + CI: DONE** — JUnit 5 unit tests for `Relocator` (bytecode/path/service/
+  string-constant relocation) and Gradle TestKit functional tests that build and
+  run real fat + shaded jars (relocation, service merge, signature stripping,
+  manifest, incrementality). GitHub Actions runs tests on every push/PR and the
+  benchmark on pushes to `main` (results in the job summary).
 - **Phase 2 (Shading): DONE (core)** — package relocation via ASM
   (`ClassRemapper`) runs inside the per-source parallel workers: class bytecode,
   entry paths, string constants and `META-INF/services/*` file names/contents are

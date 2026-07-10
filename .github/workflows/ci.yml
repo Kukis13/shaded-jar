@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Plugin tests (unit + functional)
+        run: ./gradlew -p plugin test --stacktrace
+
+      - name: Smoke-build the sample fat/shaded jar
+        run: ./gradlew :sample:fatJar --stacktrace
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: plugin/build/reports/tests/test
+          if-no-files-found: ignore
+
+  benchmark:
+    # Heavy: resolves large deps (netty/lucene/...) and runs many builds.
+    # Only on pushes to main, not on every PR.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Run benchmark (results -> job summary)
+        run: |
+          {
+            echo '## shaded-jar benchmark'
+            echo ''
+            echo '> CI runners have few, shared cores, so the parallel speedup is'
+            echo '> understated and absolute ms are noisy. Read the **ratios**, not the ms.'
+            echo ''
+            echo '```'
+            GRADLE=./gradlew bash benchmark.sh 3
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
