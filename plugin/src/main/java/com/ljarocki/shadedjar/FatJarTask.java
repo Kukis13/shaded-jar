@@ -55,7 +55,9 @@ import java.util.zip.Inflater;
  * properties files ({@code spring.factories}/{@code .handlers}/{@code .schemas},
  * see {@link SpringProperties}), which are merged across all sources instead.
  * Signature files and dependency manifests are stripped; a fresh manifest with
- * an optional {@code Main-Class} is generated.
+ * an optional {@code Main-Class} is generated — and {@code Multi-Release: true}
+ * if any source contributes a {@code META-INF/versions/N/...} entry, since the
+ * JVM otherwise ignores that directory entirely (see {@link #buildManifest}).
  */
 @CacheableTask
 public abstract class FatJarTask extends DefaultTask {
@@ -119,6 +121,9 @@ public abstract class FatJarTask extends DefaultTask {
     /** META-INF/*.SF|DSA|RSA|EC and SIG-* — invalid once contents are repackaged. */
     private static final Pattern SIGNATURE =
             Pattern.compile("META-INF/([^/]*\\.(SF|DSA|RSA|EC)|SIG-[^/]*)", Pattern.CASE_INSENSITIVE);
+
+    /** Multi-release JAR (JEP 238) version override directory — see {@link #buildManifest}. */
+    private static final Pattern MRJAR_VERSIONS = Pattern.compile("META-INF/versions/\\d+/.*");
 
     @TaskAction
     public void run() throws Exception {
@@ -201,11 +206,15 @@ public abstract class FatJarTask extends DefaultTask {
         Map<String, Map<String, LinkedHashSet<String>>> springFiles = new LinkedHashMap<>();
         long[] offset = {0};
 
+        // Known upfront (before the main copy pass) so the manifest — written first,
+        // matching the usual jar convention — can carry Multi-Release: true if needed.
+        boolean multiRelease = anyMultiReleaseEntries(parts);
+
         try (OutputStream raw = Files.newOutputStream(outFile.toPath());
              OutputStream os = new BufferedOutputStream(raw, 1 << 20)) {
 
             // Our generated manifest always goes first and wins.
-            byte[] manifestBytes = buildManifest();
+            byte[] manifestBytes = buildManifest(multiRelease);
             seen.add("META-INF/MANIFEST.MF");
             writeStored(os, "META-INF/MANIFEST.MF", manifestBytes, central, offset);
 
@@ -289,6 +298,40 @@ public abstract class FatJarTask extends DefaultTask {
         return a;
     }
 
+    /**
+     * Whether any source contributes at least one {@code META-INF/versions/N/...}
+     * entry — i.e. whether the merged output needs {@code Multi-Release: true} in
+     * its manifest for the JVM to look at that directory at all. A cheap
+     * name-only pre-pass over the part files (reading headers, skipping payload
+     * bytes) since the manifest — written first, per convention — needs this
+     * decided before the real copy pass sees any entries.
+     */
+    private static boolean anyMultiReleaseEntries(List<File> parts) throws IOException {
+        for (File part : parts) {
+            try (InputStream pin = Files.newInputStream(part.toPath());
+                 DataInputStream din = new DataInputStream(new java.io.BufferedInputStream(pin, 1 << 20))) {
+                while (true) {
+                    String name;
+                    try {
+                        int nameLen = din.readInt();
+                        byte[] nb = new byte[nameLen];
+                        din.readFully(nb);
+                        name = new String(nb, StandardCharsets.UTF_8);
+                    } catch (EOFException eof) {
+                        break;
+                    }
+                    din.readInt();  // method
+                    din.readLong(); // crc
+                    long compSize = din.readLong();
+                    din.readLong(); // rawSize
+                    if (MRJAR_VERSIONS.matcher(name).matches()) return true;
+                    skipFully(din, compSize);
+                }
+            }
+        }
+        return false;
+    }
+
     private static boolean isServiceFile(String name) {
         return name.startsWith(SERVICES) && name.length() > SERVICES.length();
     }
@@ -326,12 +369,17 @@ public abstract class FatJarTask extends DefaultTask {
         }
     }
 
-    private byte[] buildManifest() throws IOException {
+    private byte[] buildManifest(boolean multiRelease) throws IOException {
         Manifest manifest = new Manifest();
         Attributes attrs = manifest.getMainAttributes();
         attrs.put(Attributes.Name.MANIFEST_VERSION, "1.0");
         if (getMainClass().isPresent() && !getMainClass().get().isEmpty()) {
             attrs.put(Attributes.Name.MAIN_CLASS, getMainClass().get());
+        }
+        if (multiRelease) {
+            // Built by hand (not Attributes.Name.MULTI_RELEASE, a JDK 9+-only constant)
+            // since the plugin targets Java 8 bytecode and may run under an older JDK.
+            attrs.put(new Attributes.Name("Multi-Release"), "true");
         }
         if (getManifestAttributes().isPresent()) {
             for (Map.Entry<String, String> e : getManifestAttributes().get().entrySet()) {

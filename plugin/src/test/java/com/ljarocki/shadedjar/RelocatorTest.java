@@ -54,6 +54,24 @@ class RelocatorTest {
     }
 
     @Test
+    void relocatesMultiReleaseVersionedEntries_preservingTheVersionPrefix() {
+        Relocator r = reloc("com.google.common", "shaded.guava");
+        assertEquals("META-INF/versions/17/shaded/guava/collect/ImmutableList.class",
+                r.relocateEntryName("META-INF/versions/17/com/google/common/collect/ImmutableList.class"),
+                "versioned class override relocates like its base counterpart, prefix preserved");
+        assertEquals("META-INF/versions/9/shaded/guava/data.properties",
+                r.relocateEntryName("META-INF/versions/9/com/google/common/data.properties"),
+                "versioned resource override relocates too");
+        // An unrelated package under a versions/ directory is still left alone.
+        assertEquals("META-INF/versions/17/org/other/X.class",
+                r.relocateEntryName("META-INF/versions/17/org/other/X.class"));
+        // Not a real versions/ prefix (non-numeric) — must not be mistaken for one, so
+        // the whole path is just an ordinary (here, unmatched) resource path instead.
+        assertEquals("META-INF/versions/latest/com/google/common/X.class",
+                r.relocateEntryName("META-INF/versions/latest/com/google/common/X.class"));
+    }
+
+    @Test
     void relocatesServiceFileNameOnlyWhenInterfaceMatches() {
         Relocator r = reloc("com.google.common", "shaded.guava");
         assertEquals("META-INF/services/shaded.guava.Spi",
