@@ -2,7 +2,7 @@ plugins {
     id 'java'
     id 'application'
     id 'com.ljarocki.shaded-jar'
-    id 'com.gradleup.shadow' version '8.3.5'
+    id 'com.gradleup.shadow' version '9.5.1'
 }
 
 group = 'com.example'
@@ -59,6 +59,10 @@ tasks.register('stockFatJar', Jar) {
     from {
         configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
     }
+    // Strip signature files from signed deps (e.g. bouncycastle); otherwise the
+    // JVM rejects the fat jar with "Invalid signature file digest". This is the
+    // canonical manual fat-jar recipe — shaded-jar and Shadow do this for you.
+    exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA', 'META-INF/*.EC'
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 

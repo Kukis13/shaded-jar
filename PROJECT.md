@@ -56,9 +56,10 @@ archive.
   dependency in parallel on the Worker API, then assembling the parts
   single-threaded (first-wins dedup, generated manifest, signature stripping,
   reproducible timestamps, `@CacheableTask` incrementality). On an ~19.7k-entry /
-  32 MiB sample it archives in **1814 ms vs Shadow's 3807 ms (~2.1×)** and stock
-  Gradle Jar's 2652 ms, producing the smallest jar. Reuses the parallel-Deflate +
-  ZIP-writing engine from `ELEGANT_ZIP`. See [`fast-shade/README.md`](fast-shade/README.md).
+  32 MiB sample it archives in **1871 ms vs Shadow's 3191 ms (~1.7×)** and stock
+  Gradle Jar's 2637 ms, producing the smallest jar (measured on Gradle 9.6.1,
+  Shadow 9.5.1, JDK 21). Reuses the parallel-Deflate + ZIP-writing engine from
+  `ELEGANT_ZIP`. See [`fast-shade/README.md`](fast-shade/README.md).
 
 ## Scope / phases
 

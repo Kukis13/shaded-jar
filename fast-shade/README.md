@@ -19,13 +19,14 @@ fixed per-invocation overhead subtracted, best of 6):
 
 | task                    | archive step | vs shaded-jar | output size |
 | ----------------------- | -----------: | ------------: | ----------: |
-| **fatJar** (shaded-jar) |  **1814 ms** |          1.0× |   33.83 MiB |
-| shadowJar (Shadow)      |      3807 ms |         2.10× |   33.99 MiB |
-| stockFatJar (Gradle Jar)|      2652 ms |         1.46× |   34.24 MiB |
+| **fatJar** (shaded-jar) |  **1871 ms** |          1.0× |   33.83 MB  |
+| shadowJar (Shadow)      |      3191 ms |         1.71× |   34.32 MB  |
+| stockFatJar (Gradle Jar)|      2637 ms |         1.41× |   33.99 MB  |
 
-shaded-jar is ~2.1× faster than Shadow here and produces the smallest jar.
-Reproduce with `bash benchmark.sh` (numbers scale with core count and dependency
-size). Measured on this machine; your mileage varies.
+shaded-jar is ~1.7× faster than Shadow here and produces the smallest jar.
+Measured on Gradle 9.6.1, Shadow 9.5.1, JDK 21. Reproduce with
+`bash benchmark.sh` (numbers scale with core count and dependency size); your
+mileage varies.
 
 ## Usage
 
