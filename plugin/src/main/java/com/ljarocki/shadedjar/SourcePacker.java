@@ -43,6 +43,11 @@ import java.util.zip.ZipFile;
  * normal decode/recompress path per-entry, or for the whole jar, on anything
  * that doesn't fit the plain (non-Zip64) central directory this reads.
  *
+ * <p>{@code META-INF/services/*} and the well-known Spring properties files
+ * ({@code META-INF/spring.factories}/{@code .handlers}/{@code .schemas}, see
+ * {@link SpringProperties}) are relocated here (per-source) but merged later,
+ * in {@code FatJarTask.assemble}, once every source's part has been packed.
+ *
  * <p>Instances are stateless beyond their config, so {@link #pack} may be called
  * concurrently for different sources: each call uses its own {@link Deflater} and
  * {@link Relocator}. {@link PackAction} runs one {@code pack} per source on
@@ -134,25 +139,30 @@ final class SourcePacker {
 
     /**
      * Whether {@code name} can be copied byte-for-byte from the source jar
-     * without decoding: service files always need decoding (to merge/relocate
-     * their content); class files need it only when relocation is active at
-     * all (their bytecode may reference a relocated type even if their own
-     * path doesn't match a rule); everything else is content-unchanged by
-     * relocation (only its path may be renamed), so it's always eligible.
+     * without decoding: service files and the well-known Spring properties
+     * files always need decoding (to merge/relocate their content); class
+     * files need it only when relocation is active at all (their bytecode may
+     * reference a relocated type even if their own path doesn't match a
+     * rule); everything else is content-unchanged by relocation (only its
+     * path may be renamed), so it's always eligible.
      */
     private static boolean isVerbatimEligible(String name, Relocator relocator) {
         if (name.startsWith(SERVICES) && name.length() > SERVICES.length()) return false;
+        if (SpringProperties.Kind.of(name) != null) return false;
         if (name.endsWith(".class")) return relocator.isEmpty();
         return true;
     }
 
     /**
-     * Apply relocation (if any) to one entry, then emit its record. Service files
-     * are always STORE'd so the assembler can read and merge them cheaply.
+     * Apply relocation (if any) to one entry, then emit its record. Service
+     * files and the well-known Spring properties files ({@code spring.factories}
+     * / {@code .handlers} / {@code .schemas}) are always STORE'd so the
+     * assembler can read and merge them cheaply.
      */
     private void processEntry(DataOutputStream out, String name, byte[] raw, Deflater deflater,
                               Relocator relocator) throws IOException {
         boolean isService = name.startsWith(SERVICES) && name.length() > SERVICES.length();
+        SpringProperties.Kind springKind = SpringProperties.Kind.of(name);
         String outName = name;
         byte[] data = raw;
 
@@ -164,11 +174,13 @@ final class SourcePacker {
                 outName = relocator.relocateServiceFileName(name);
                 data = Relocator.utf8(relocator.relocateServiceContent(
                         new String(raw, StandardCharsets.UTF_8)));
+            } else if (springKind != null) {
+                data = SpringProperties.relocateContent(springKind, raw, relocator);
             } else {
                 outName = relocator.relocateEntryName(name);
             }
         }
-        writeRecord(out, outName, data, deflater, store || isService);
+        writeRecord(out, outName, data, deflater, store || isService || springKind != null);
     }
 
     /** Compress {@code raw} and append one record to the part stream. */

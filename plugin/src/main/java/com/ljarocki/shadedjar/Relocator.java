@@ -135,6 +135,16 @@ final class Relocator {
         return SERVICES + mapDot(name.substring(SERVICES.length()));
     }
 
+    /**
+     * Relocate a single dotted class name by package prefix. Public entry point
+     * onto {@link #mapDot} for callers outside the service-file/entry-name cases
+     * above — currently the Spring {@code spring.factories}/{@code spring.handlers}
+     * resource-file support in {@link SpringProperties}.
+     */
+    String relocateDottedName(String name) {
+        return mapDot(name);
+    }
+
     /** Relocate the provider class names inside a service file's content. */
     String relocateServiceContent(String content) {
         StringBuilder sb = new StringBuilder(content.length());
