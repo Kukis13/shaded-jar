@@ -48,7 +48,11 @@ jobs:
           java-version: '21'
           cache: gradle
 
-      - name: Run benchmark (results -> job summary)
+      - name: Run benchmark
+        run: GRADLE=./gradlew bash benchmark.sh 3 | tee bench.txt
+
+      - name: Publish benchmark to job summary
+        if: always()
         run: |
           {
             echo '## shaded-jar benchmark'
@@ -57,6 +61,6 @@ jobs:
             echo '> understated and absolute ms are noisy. Read the **ratios**, not the ms.'
             echo ''
             echo '```'
-            GRADLE=./gradlew bash benchmark.sh 3
+            cat bench.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
