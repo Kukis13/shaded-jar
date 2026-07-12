@@ -26,7 +26,7 @@ relocated. Archive step only, best of 5:
 | shadowJar (Shadow)        |      6410 ms |          3.09× |
 | stockFatJar (Gradle Jar)* |      2551 ms |             —  |
 
-**~3× faster than Shadow** with relocation on, and the smallest output.
+**~3× faster than com.gradleup.shadow** with relocation on, and the smallest output.
 \* Stock Gradle `Jar` can't relocate — shown only as a fat-jar floor.
 
 Full breakdown (single-worker isolation, pack-cache cold/warm, methodology) →

@@ -12,7 +12,7 @@ subtracted, best of 5):
 | shadowJar (Shadow)       |      6410 ms |         3.09× |   34.38 MB  |
 | stockFatJar (Gradle Jar)*|      2551 ms |            —  |   33.99 MB  |
 
-shaded-jar is **~3× faster than Shadow** with relocation on, and produces the
+shaded-jar is **~3× faster than com.gradleup.shadow** with relocation on, and produces the
 smallest jar. Both `fatJar` and `shadowJar` relocate Guava and merge service
 files; relocation is nearly free for shaded-jar because it runs inside the
 per-source parallel workers, whereas it almost doubled Shadow's time. Measured on
