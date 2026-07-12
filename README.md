@@ -244,7 +244,12 @@ inputs → incremental (`UP-TO-DATE`) and build-cache friendly (`FROM-CACHE`).
   scenario it targets, so caching it would buy nothing but hashing overhead.
   It's capped at 1 GiB total (least-recently-used entries evicted first) and
   isn't user-configurable yet (no way to change the cap, location, or turn it
-  off).
+  off). Its cache key covers source content and every packing parameter
+  (level, store, relocations, includes/excludes), but **not the plugin's own
+  version** — entries are only invalidated across a plugin upgrade if that
+  release bumps `PackCache.SCHEMA_VERSION` (a manually-maintained constant,
+  currently `v1`). A future release that changes packing behavior without
+  bumping it could silently serve a stale entry for an unchanged dependency.
 - **Resource transformers cover `META-INF/services/*` and the three Spring
   properties files** (`spring.factories`/`.handlers`/`.schemas`). Other
   formats with their own merge semantics — Spring Boot's binary-adjacent
