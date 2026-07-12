@@ -2,12 +2,14 @@ package com.ljarocki.shadedjar;
 
 import org.gradle.api.DefaultTask;
 import org.gradle.api.file.ConfigurableFileCollection;
+import org.gradle.api.file.DirectoryProperty;
 import org.gradle.api.file.RegularFileProperty;
 import org.gradle.api.provider.MapProperty;
 import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.CacheableTask;
 import org.gradle.api.tasks.Classpath;
 import org.gradle.api.tasks.Input;
+import org.gradle.api.tasks.Internal;
 import org.gradle.api.tasks.Optional;
 import org.gradle.api.tasks.OutputFile;
 import org.gradle.api.tasks.TaskAction;
@@ -112,6 +114,18 @@ public abstract class FatJarTask extends DefaultTask {
     @Optional
     public abstract MapProperty<String, String> getRelocationExcludes();
 
+    /**
+     * Persistent cross-build cache directory for packed sources (see {@link
+     * PackCache}); set by {@code ShadedJarPlugin} to a fixed location under
+     * Gradle's user home. {@code @Internal}, not {@code @InputDirectory}/
+     * {@code @OutputDirectory} — it's a look-aside optimization, not part of this
+     * task's own declared inputs/outputs, and its (machine-wide, ever-growing)
+     * contents must never be hashed as part of this task's up-to-date/build-cache
+     * key.
+     */
+    @Internal
+    public abstract DirectoryProperty getPackCacheDir();
+
     @Inject
     public abstract WorkerExecutor getWorkerExecutor();
 
@@ -144,6 +158,13 @@ public abstract class FatJarTask extends DefaultTask {
         deleteRecursively(partsDir);
         partsDir.mkdirs();
 
+        File cacheDir = getPackCacheDir().isPresent() ? getPackCacheDir().getAsFile().get() : null;
+        if (cacheDir != null) {
+            PackCache.evictIfNeeded(cacheDir, PackCache.DEFAULT_MAX_BYTES);
+        }
+        PackAction.CACHE_HITS.set(0);
+        PackAction.CACHE_MISSES.set(0);
+
         long t0 = System.nanoTime();
 
         // --- Parallel phase: one worker per source on Gradle's pool (--max-workers) ---
@@ -161,10 +182,15 @@ public abstract class FatJarTask extends DefaultTask {
                 p.getRelocations().set(relocations);
                 p.getRelocationIncludes().set(relocationIncludes);
                 p.getRelocationExcludes().set(relocationExcludes);
+                if (cacheDir != null) {
+                    p.getPackCacheDir().set(cacheDir);
+                }
             });
         }
         queue.await();
         long tPack = System.nanoTime();
+        int cacheHits = PackAction.CACHE_HITS.get();
+        int cacheMisses = PackAction.CACHE_MISSES.get();
 
         // --- Sequential phase: assemble parts into one jar ---
         Assembly a = assemble(parts, outFile);
@@ -173,9 +199,9 @@ public abstract class FatJarTask extends DefaultTask {
         deleteRecursively(partsDir);
         getLogger().lifecycle(String.format(
                 "shaded-jar: %d sources -> %d entries, %.1f MiB  (dropped %d dup/filtered)  "
-                        + "pack=%.0fms assemble=%.0fms TOTAL=%.0fms",
+                        + "pack=%.0fms assemble=%.0fms TOTAL=%.0fms  (pack-cache: %d hit, %d miss)",
                 sources.size(), a.entryCount, a.archiveSize / 1048576.0, a.dropped,
-                (tPack - t0) / 1e6, (tEnd - tPack) / 1e6, (tEnd - t0) / 1e6));
+                (tPack - t0) / 1e6, (tEnd - tPack) / 1e6, (tEnd - t0) / 1e6, cacheHits, cacheMisses));
     }
 
     private static final class Assembly {

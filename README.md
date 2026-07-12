@@ -139,6 +139,25 @@ so concurrency follows the usual `--max-workers` / `org.gradle.workers.max`
    header instead of inflating and re-deflating them. Class files still always go
    through ASM whenever any relocation is configured, even if their own path
    isn't relocated, because their bytecode may reference a class that is.
+
+   On top of that, each jar source's packed output is looked up in a
+   **persistent, cross-build pack cache** first, keyed by the source jar's
+   content hash *and* every packing parameter that affects the output (level,
+   store, relocations, includes/excludes) — so a config change can never
+   silently reuse a stale entry with the old package names. A hit skips
+   packing (and, for a shaded jar, ASM) entirely for that source; a miss packs
+   normally and stores the result for next time. This matters most for shaded
+   jars specifically: relocation forces *every* class in *every* dependency
+   through ASM regardless of whether verbatim-copy applies, so on an
+   incremental rebuild where only your own code changed, every unchanged
+   dependency was previously re-processed anyway. On the sample app (58
+   sources, relocation on), that's a **~4.6× drop in total build time**
+   (1.6 s → 0.3 s) once the cache is warm. The cache lives under Gradle's
+   user home (`~/.gradle/caches/shaded-jar/`), not the project's `build/`
+   directory, specifically so it survives fresh checkouts on CI when
+   `~/.gradle/caches` is restored — which `gradle/actions/setup-gradle` and
+   `actions/setup-java`'s `cache: gradle` option both already do by default,
+   so most CI setups get this for free with no extra configuration.
 3. **Assemble** — a single thread streams the parts into one valid, reproducible
    JAR: first-wins duplicate handling, **`META-INF/services/*` and the Spring
    properties files merged** across all sources (see the table below), a
@@ -176,6 +195,12 @@ inputs → incremental (`UP-TO-DATE`) and build-cache friendly (`FROM-CACHE`).
 
 ## Known limitations
 
+- **The pack cache only applies to jar sources**, never a project's own
+  compiled output directory — that changes on essentially every build in the
+  scenario it targets, so caching it would buy nothing but hashing overhead.
+  It's capped at 1 GiB total (least-recently-used entries evicted first) and
+  isn't user-configurable yet (no way to change the cap, location, or turn it
+  off).
 - **Resource transformers cover `META-INF/services/*` and the three Spring
   properties files** (`spring.factories`/`.handlers`/`.schemas`). Other
   formats with their own merge semantics — Spring Boot's binary-adjacent
@@ -254,12 +279,16 @@ summary).
     `SourcePackerTest` (verbatim compressed-stream copy), `Zip64SupportTest`
     (hermetic Zip64 byte-layout tests), `SpringPropertiesTest` (hermetic
     spring.factories/.handlers/.schemas merge + relocation semantics),
+    `PackCacheTest` (hermetic: key computation, atomic store, LRU eviction),
     `PluginFunctionalTest`, `Zip64EntryCountFunctionalTest`,
     `SpringPropertiesFunctionalTest`, `RelocationFilterFunctionalTest`,
     `MultiReleaseJarFunctionalTest`, `GradleVersionCompatibilityFunctionalTest`,
-    and `ConfigurationCacheFunctionalTest` (TestKit: builds and runs real fat/
-    shaded/Zip64-scale/Spring-Boot-flavored/filtered-relocation/multi-release
-    jars, the last two explicitly against both Gradle 8.5 and 9.6.1).
+    `ConfigurationCacheFunctionalTest`, and `PackCacheFunctionalTest` (TestKit:
+    builds and runs real fat/shaded/Zip64-scale/Spring-Boot-flavored/filtered-
+    relocation/multi-release jars; the middle two explicitly against both
+    Gradle 8.5 and 9.6.1; the last proves the pack cache is actually reused
+    across two separate project checkouts sharing a persisted Gradle user
+    home — the CI scenario).
 - `sample/` — a runnable app applying shaded-jar + Shadow + a stock-Jar fat jar,
   demonstrating relocation and service merging.
 - `benchmark.sh` — timing harness.

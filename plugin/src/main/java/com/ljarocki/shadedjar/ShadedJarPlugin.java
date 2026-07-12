@@ -7,6 +7,8 @@ import org.gradle.api.plugins.JavaPluginExtension;
 import org.gradle.api.tasks.SourceSet;
 import org.gradle.api.tasks.TaskProvider;
 
+import java.io.File;
+
 /**
  * Registers the {@code fatJar} task and, when the {@code java} plugin is present,
  * wires it to the project's runtime classpath and main output automatically.
@@ -25,6 +27,13 @@ public class ShadedJarPlugin implements Plugin<Project> {
                 .create("shadedJar", ShadedJarExtension.class);
         ext.getArchiveClassifier().convention("all");
 
+        // Resolved eagerly here (configuration time), not inside a lazy Provider —
+        // the resulting File is a plain, serializable value the task property just
+        // holds, rather than a live reference to Project/Gradle captured for use at
+        // execution time, which would risk breaking the configuration cache.
+        File packCacheDir = new File(project.getGradle().getGradleUserHomeDir(),
+                "caches/shaded-jar/" + PackCache.SCHEMA_VERSION);
+
         TaskProvider<FatJarTask> fatJar = project.getTasks()
                 .register("fatJar", FatJarTask.class, task -> {
                     task.setGroup("build");
@@ -33,6 +42,7 @@ public class ShadedJarPlugin implements Plugin<Project> {
                     task.getRelocations().convention(ext.getRelocations());
                     task.getRelocationIncludes().convention(ext.getRelocationIncludes());
                     task.getRelocationExcludes().convention(ext.getRelocationExcludes());
+                    task.getPackCacheDir().set(packCacheDir);
                     task.getArchiveFile().convention(
                             project.getLayout().getBuildDirectory().file(
                                     project.provider(() -> "libs/" + archiveName(project, ext))));
