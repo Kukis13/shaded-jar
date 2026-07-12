@@ -1,5 +1,6 @@
 package com.ljarocki.shadedjar;
 
+import org.gradle.api.file.DirectoryProperty;
 import org.gradle.api.file.RegularFileProperty;
 import org.gradle.api.provider.MapProperty;
 import org.gradle.api.provider.Property;
@@ -27,4 +28,7 @@ public interface PackParams extends WorkParameters {
 
     /** Exclude patterns per relocation, same shape as {@link #getRelocationIncludes()}. */
     MapProperty<String, String> getRelocationExcludes();
+
+    /** Persistent cross-build cache directory (see {@link PackCache}); optional — absent disables caching for this source. */
+    DirectoryProperty getPackCacheDir();
 }
