@@ -11,13 +11,15 @@
   release bumps `PackCache.SCHEMA_VERSION` (a manually-maintained constant,
   currently `v1`). A future release that changes packing behavior without
   bumping it could silently serve a stale entry for an unchanged dependency.
-- **Resource transformers cover `META-INF/services/*` and the three Spring
-  properties files** (`spring.factories`/`.handlers`/`.schemas`). Other
-  formats with their own merge semantics — Spring Boot's binary-adjacent
-  config metadata, log4j2's binary plugin cache (`Log4j2Plugins.dat`),
-  HOCON/`reference.conf` (Akka/Lightbend Config) — aren't handled yet; a
-  dependency relying on one of those needs its merge/relocation handled
-  another way for now.
+- **Resource transformers cover `META-INF/services/*`, the three Spring
+  properties files** (`spring.factories`/`.handlers`/`.schemas`), **and
+  log4j2's binary plugin cache** (`Log4j2Plugins.dat` — every source's cache
+  is genuinely merged into one, via log4j-core's own `PluginCache`, not
+  first-wins; relocated plugin class names are rewritten too). Other formats
+  with their own merge semantics — Spring Boot's binary-adjacent config
+  metadata, HOCON/`reference.conf` (Akka/Lightbend Config) — aren't handled
+  yet; a dependency relying on one of those needs its merge/relocation
+  handled another way for now.
 - **`spring.schemas` values are never relocated** — they're classpath resource
   paths (e.g. `META-INF/some.xsd`), not class names, so package-prefix
   relocation doesn't apply to them the way it does to `spring.factories`/

@@ -16,6 +16,14 @@ dependencies {
     implementation 'org.ow2.asm:asm:9.7.1'
     implementation 'org.ow2.asm:asm-commons:9.7.1'
 
+    // Log4j2's own PluginCache/PluginEntry classes drive the Log4j2Plugins.dat
+    // plugin-cache merge (Log4j2PluginCacheMerger) -- reused directly (this is
+    // the plugin's own build-time dependency, never shipped into a consuming
+    // project's jar) rather than hand-rolling that binary format ourselves, to
+    // guarantee exact fidelity with whatever log4j2 version a user's project
+    // actually bundles.
+    implementation 'org.apache.logging.log4j:log4j-core:2.26.1'
+
     testImplementation platform('org.junit:junit-bom:5.10.2')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'

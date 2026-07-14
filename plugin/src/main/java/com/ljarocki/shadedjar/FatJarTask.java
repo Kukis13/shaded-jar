@@ -193,7 +193,7 @@ public abstract class FatJarTask extends DefaultTask {
         int cacheMisses = PackAction.CACHE_MISSES.get();
 
         // --- Sequential phase: assemble parts into one jar ---
-        Assembly a = assemble(parts, outFile);
+        Assembly a = assemble(parts, outFile, relocations, relocationIncludes, relocationExcludes);
         long tEnd = System.nanoTime();
 
         deleteRecursively(partsDir);
@@ -221,7 +221,9 @@ public abstract class FatJarTask extends DefaultTask {
         }
     }
 
-    private Assembly assemble(List<File> parts, File outFile) throws IOException {
+    private Assembly assemble(List<File> parts, File outFile, Map<String, String> relocations,
+                              Map<String, String> relocationIncludes, Map<String, String> relocationExcludes)
+            throws IOException {
         Assembly a = new Assembly();
         outFile.getParentFile().mkdirs();
         List<CdEntry> central = new ArrayList<>();
@@ -230,6 +232,8 @@ public abstract class FatJarTask extends DefaultTask {
         Map<String, LinkedHashSet<String>> services = new LinkedHashMap<>();
         // Spring properties files are merged per-key (see SpringProperties): file name -> key -> values.
         Map<String, Map<String, LinkedHashSet<String>>> springFiles = new LinkedHashMap<>();
+        // Each source's raw Log4j2Plugins.dat bytes (see Log4j2PluginCacheMerger), merged once at the end.
+        List<byte[]> log4j2PluginCaches = new ArrayList<>();
         long[] offset = {0};
 
         // Known upfront (before the main copy pass) so the manifest — written first,
@@ -280,6 +284,11 @@ public abstract class FatJarTask extends DefaultTask {
                             }
                             continue;
                         }
+                        // Same idea for log4j2's binary plugin cache: accumulated, merged once at the end.
+                        if (name.equals(Log4j2PluginCacheMerger.ENTRY_NAME)) {
+                            log4j2PluginCaches.add(readEntryBytes(din, method, compSize, rawSize));
+                            continue;
+                        }
                         if (isFiltered(name) || !seen.add(name)) {
                             skipFully(din, compSize);
                             a.dropped++;
@@ -312,6 +321,14 @@ public abstract class FatJarTask extends DefaultTask {
             for (String name : springNames) {
                 if (!seen.add(name)) continue;
                 writeStored(os, name, SpringProperties.renderMerged(springFiles.get(name)), central, offset);
+            }
+
+            // Emit the merged log4j2 plugin cache, relocated once as a whole (see Log4j2PluginCacheMerger).
+            if (!log4j2PluginCaches.isEmpty() && seen.add(Log4j2PluginCacheMerger.ENTRY_NAME)) {
+                Relocator relocator = new Relocator(relocations, relocationIncludes, relocationExcludes);
+                File mergeTempDir = new File(getTemporaryDir(), "log4j2-plugin-cache");
+                byte[] merged = Log4j2PluginCacheMerger.merge(log4j2PluginCaches, mergeTempDir, relocator);
+                writeStored(os, Log4j2PluginCacheMerger.ENTRY_NAME, merged, central, offset);
             }
 
             long cdOffset = offset[0];

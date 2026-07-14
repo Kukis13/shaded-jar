@@ -34,9 +34,10 @@
    `actions/setup-java`'s `cache: gradle` option both already do by default,
    so most CI setups get this for free with no extra configuration.
 3. **Assemble** — a single thread streams the parts into one valid, reproducible
-   JAR: first-wins duplicate handling, **`META-INF/services/*` and the Spring
-   properties files merged** across all sources (see the table below), a
-   freshly generated manifest, and stripping of dependency manifests,
+   JAR: first-wins duplicate handling, **`META-INF/services/*`, the Spring
+   properties files, and log4j2's binary plugin cache merged** across all
+   sources (see the table below), a freshly generated manifest, and stripping
+   of dependency manifests,
    signature files (`*.SF/.DSA/.RSA/.EC`) and stale `INDEX.LIST`. Any entry, or
    the central directory itself, that doesn't fit the classic ZIP format's
    32-bit/16-bit fields transparently promotes to Zip64. If any source
@@ -67,6 +68,16 @@ build warning rather than silently dropped — the first one (in classpath
 order) still wins, but you'll know about it. Timestamps are normalized, so
 output is byte-reproducible. The task is `@CacheableTask` with `@Classpath`
 inputs → incremental (`UP-TO-DATE`) and build-cache friendly (`FROM-CACHE`).
+
+`Log4j2Plugins.dat` — log4j2's own annotation processor generates this
+binary plugin-discovery cache, and without a real merge, bundling more than
+one log4j2-using dependency silently drops every plugin but one's. Rather
+than reimplement that binary format, `Log4j2PluginCacheMerger` reuses
+log4j-core's own `PluginCache`/`PluginEntry` classes directly (an
+`implementation` dependency of this plugin, never bundled into a consuming
+project's jar) to load every source's cache, merge them into one, relocate
+each plugin's declared class name if it matches a relocation rule, and
+write the result back out as a single entry.
 
 See also: [Benchmarks](BENCHMARKS.md) · [Known limitations](LIMITATIONS.md) ·
 [Compatibility](COMPATIBILITY.md) · [Development](DEVELOPMENT.md)
