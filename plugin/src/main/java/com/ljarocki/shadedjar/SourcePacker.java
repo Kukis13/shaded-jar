@@ -178,34 +178,40 @@ final class SourcePacker {
 
     /**
      * Whether {@code name} can be copied byte-for-byte from the source jar
-     * without decoding: service files and the well-known Spring properties
-     * files always need decoding (to merge/relocate their content); class
-     * files need it only when relocation is active at all (their bytecode may
-     * reference a relocated type even if their own path doesn't match a
-     * rule); everything else is content-unchanged by relocation (only its
-     * path may be renamed), so it's always eligible.
+     * without decoding: service files, the well-known Spring properties
+     * files, and the log4j2 plugin cache always need decoding (to merge/
+     * relocate their content); class files need it only when relocation is
+     * active at all (their bytecode may reference a relocated type even if
+     * their own path doesn't match a rule); everything else is
+     * content-unchanged by relocation (only its path may be renamed), so
+     * it's always eligible.
      */
     private static boolean isVerbatimEligible(String name, Relocator relocator) {
         if (name.startsWith(SERVICES) && name.length() > SERVICES.length()) return false;
         if (SpringProperties.Kind.of(name) != null) return false;
+        if (name.equals(Log4j2PluginCacheMerger.ENTRY_NAME)) return false;
         if (name.endsWith(".class")) return relocator.isEmpty();
         return true;
     }
 
     /**
      * Apply relocation (if any) to one entry, then emit its record. Service
-     * files and the well-known Spring properties files ({@code spring.factories}
-     * / {@code .handlers} / {@code .schemas}) are always STORE'd so the
-     * assembler can read and merge them cheaply.
+     * files, the well-known Spring properties files ({@code spring.factories}
+     * / {@code .handlers} / {@code .schemas}), and the log4j2 plugin cache
+     * ({@code Log4j2Plugins.dat}) are always STORE'd so the assembler can
+     * read and merge them cheaply. The plugin cache's own relocation happens
+     * once, after merging (see {@link Log4j2PluginCacheMerger}) — its path
+     * and bytes are passed through unchanged here.
      */
     private void processEntry(DataOutputStream out, String name, byte[] raw, Deflater deflater,
                               Relocator relocator) throws IOException {
         boolean isService = name.startsWith(SERVICES) && name.length() > SERVICES.length();
         SpringProperties.Kind springKind = SpringProperties.Kind.of(name);
+        boolean isLog4j2PluginCache = name.equals(Log4j2PluginCacheMerger.ENTRY_NAME);
         String outName = name;
         byte[] data = raw;
 
-        if (!relocator.isEmpty()) {
+        if (!relocator.isEmpty() && !isLog4j2PluginCache) {
             if (name.endsWith(".class")) {
                 data = relocator.relocateClass(raw);
                 outName = relocator.relocateEntryName(name);
@@ -219,7 +225,7 @@ final class SourcePacker {
                 outName = relocator.relocateEntryName(name);
             }
         }
-        writeRecord(out, outName, data, deflater, store || isService || springKind != null);
+        writeRecord(out, outName, data, deflater, store || isService || springKind != null || isLog4j2PluginCache);
     }
 
     /** Compress {@code raw} and append one record to the part stream. */
