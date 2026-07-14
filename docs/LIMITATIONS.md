@@ -48,6 +48,13 @@
 - **String-constant relocation is best-effort** (prefix match), like Shadow — a
   literal that merely starts with a relocated package but isn't a class name
   would also be rewritten.
+- **`minimize()`'s reachability analysis is static** (via `jdependency`, the
+  same library Shadow's own `minimize()` uses) — it cannot see a class only
+  ever found through reflection, `ServiceLoader`-by-name, or `Class.forName`,
+  so such a class looks unreferenced and gets dropped unless explicitly kept
+  with `minimize { keep '...' }`. It also does not currently follow a
+  `META-INF/versions/N/...` multi-release override of an otherwise-dropped
+  base class — a narrow gap, not a general correctness issue.
 - **Verbatim-copied entries keep the source jar's original DEFLATE level**,
   not the configured `level`, since their compressed bytes are never touched.
   The copy also only applies to source jars with a plain (non-Zip64) central

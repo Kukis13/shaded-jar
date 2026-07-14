@@ -81,6 +81,27 @@ filter rejects falls through to the next (shorter-prefix) rule instead of
 being left alone outright, so an exclude can "un-relocate" a subpackage
 nested inside a broader rule.
 
+Drop unreferenced dependency classes with `minimize()` — anything the
+reachability analysis can't prove is used by the project's own code is left
+out of the jar entirely:
+
+```gradle
+shadedJar {
+    minimize()
+    minimize {
+        // Only ever looked up by name (reflection/ServiceLoader), so static
+        // reachability can't see it's actually used — keep it regardless.
+        keep 'com.example.plugin.ReflectivelyLoadedThing'
+        keep 'org.some.plugin.**'
+    }
+}
+```
+
+`keep` takes the same pattern language as relocation's `include`/`exclude`
+(exact dotted name, or a `.**` prefix wildcard). Like Shadow's own
+`minimize()`, this can't see through reflection, `ServiceLoader`-by-name, or
+`Class.forName` — a class only ever found that way needs an explicit `keep`.
+
 ```
 ./gradlew fatJar
 java -jar build/libs/<name>-<version>-all.jar

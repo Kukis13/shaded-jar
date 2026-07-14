@@ -21,6 +21,7 @@ import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.zip.CRC32;
 import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
@@ -64,18 +65,30 @@ final class SourcePacker {
     private final Map<String, String> relocations;
     private final Map<String, String> relocationIncludes;
     private final Map<String, String> relocationExcludes;
+    private final Set<String> dropClasses;
 
     SourcePacker(int level, boolean store, Map<String, String> relocations) {
-        this(level, store, relocations, Collections.emptyMap(), Collections.emptyMap());
+        this(level, store, relocations, Collections.emptyMap(), Collections.emptyMap(), Collections.emptySet());
     }
 
     SourcePacker(int level, boolean store, Map<String, String> relocations,
                 Map<String, String> relocationIncludes, Map<String, String> relocationExcludes) {
+        this(level, store, relocations, relocationIncludes, relocationExcludes, Collections.emptySet());
+    }
+
+    /**
+     * @param dropClasses {@code minimize()}'s drop set (see {@link Minimizer}) — internal
+     *     (slash-form) names of classes to omit entirely; empty when minimize is off.
+     */
+    SourcePacker(int level, boolean store, Map<String, String> relocations,
+                Map<String, String> relocationIncludes, Map<String, String> relocationExcludes,
+                Set<String> dropClasses) {
         this.level = level;
         this.store = store;
         this.relocations = relocations;
         this.relocationIncludes = relocationIncludes;
         this.relocationExcludes = relocationExcludes;
+        this.dropClasses = dropClasses;
     }
 
     void pack(File source, File part) throws IOException {
@@ -107,6 +120,7 @@ final class SourcePacker {
         files.sort(Comparator.naturalOrder());
         for (Path p : files) {
             String name = root.relativize(p).toString().replace('\\', '/');
+            if (isDroppedClass(name)) continue;
             processEntry(out, name, Files.readAllBytes(p), deflater, relocator);
         }
     }
@@ -125,6 +139,7 @@ final class SourcePacker {
                 ZipEntry e = entries.nextElement();
                 if (e.isDirectory()) continue;
                 String name = e.getName();
+                if (isDroppedClass(name)) continue;
 
                 RawEntry raw = rawIndex != null ? rawIndex.get(name) : null;
                 if (raw != null && !store && raw.method == PartFormat.METHOD_DEFLATE
@@ -145,6 +160,20 @@ final class SourcePacker {
                 processEntry(out, name, data, deflater, relocator);
             }
         }
+    }
+
+    /**
+     * Whether {@code minimize()} drops this entry entirely (see {@link
+     * Minimizer}) — checked before verbatim-copy eligibility or relocation,
+     * so a dropped class costs nothing beyond this membership check. Matched
+     * against the entry's own (pre-relocation) path only — a class that only
+     * exists as a {@code META-INF/versions/N/...} multi-release override of
+     * an otherwise-dropped base class is not currently caught by this (a
+     * known, narrow gap: see {@code docs/LIMITATIONS.md}).
+     */
+    private boolean isDroppedClass(String name) {
+        if (dropClasses.isEmpty() || !name.endsWith(".class")) return false;
+        return dropClasses.contains(name.substring(0, name.length() - ".class".length()));
     }
 
     /**

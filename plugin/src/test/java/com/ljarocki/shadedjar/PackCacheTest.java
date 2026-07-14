@@ -39,37 +39,42 @@ class PackCacheTest {
     void fingerprint_isStableForIdenticalConfig_regardlessOfMapInsertionOrder() {
         Map<String, String> a = map("com.a", "shaded.a", "com.b", "shaded.b");
         Map<String, String> b = map("com.b", "shaded.b", "com.a", "shaded.a"); // reversed insertion order
-        byte[] fp1 = PackCache.configFingerprint(6, false, a, Collections.emptyMap(), Collections.emptyMap());
-        byte[] fp2 = PackCache.configFingerprint(6, false, b, Collections.emptyMap(), Collections.emptyMap());
+        byte[] fp1 = PackCache.configFingerprint(6, false, a, Collections.emptyMap(), Collections.emptyMap(), Collections.emptySet());
+        byte[] fp2 = PackCache.configFingerprint(6, false, b, Collections.emptyMap(), Collections.emptyMap(), Collections.emptySet());
         assertArrayEquals(fp1, fp2);
     }
 
     @Test
     void fingerprint_changesWithEveryParameterThatAffectsOutput() {
-        byte[] base = PackCache.configFingerprint(6, false, map("a", "b"), Collections.emptyMap(), Collections.emptyMap());
+        byte[] base = PackCache.configFingerprint(6, false, map("a", "b"), Collections.emptyMap(), Collections.emptyMap(), Collections.emptySet());
 
         assertNotEquals(bytesToHex(base), bytesToHex(
-                PackCache.configFingerprint(9, false, map("a", "b"), Collections.emptyMap(), Collections.emptyMap())),
+                PackCache.configFingerprint(9, false, map("a", "b"), Collections.emptyMap(), Collections.emptyMap(), Collections.emptySet())),
                 "level must affect the fingerprint");
         assertNotEquals(bytesToHex(base), bytesToHex(
-                PackCache.configFingerprint(6, true, map("a", "b"), Collections.emptyMap(), Collections.emptyMap())),
+                PackCache.configFingerprint(6, true, map("a", "b"), Collections.emptyMap(), Collections.emptyMap(), Collections.emptySet())),
                 "store must affect the fingerprint");
         assertNotEquals(bytesToHex(base), bytesToHex(
-                PackCache.configFingerprint(6, false, map("a", "c"), Collections.emptyMap(), Collections.emptyMap())),
+                PackCache.configFingerprint(6, false, map("a", "c"), Collections.emptyMap(), Collections.emptyMap(), Collections.emptySet())),
                 "a relocation target change must affect the fingerprint");
         assertNotEquals(bytesToHex(base), bytesToHex(
-                PackCache.configFingerprint(6, false, map("a", "b"), map("a", "a.x.**"), Collections.emptyMap())),
+                PackCache.configFingerprint(6, false, map("a", "b"), map("a", "a.x.**"), Collections.emptyMap(), Collections.emptySet())),
                 "adding an include pattern must affect the fingerprint");
         assertNotEquals(bytesToHex(base), bytesToHex(
-                PackCache.configFingerprint(6, false, map("a", "b"), Collections.emptyMap(), map("a", "a.y.**"))),
+                PackCache.configFingerprint(6, false, map("a", "b"), Collections.emptyMap(), map("a", "a.y.**"), Collections.emptySet())),
                 "adding an exclude pattern must affect the fingerprint");
+        assertNotEquals(bytesToHex(base), bytesToHex(
+                PackCache.configFingerprint(6, false, map("a", "b"), Collections.emptyMap(), Collections.emptyMap(),
+                        Collections.singleton("some/Dropped"))),
+                "minimize()'s drop set must affect the fingerprint, so an unrelated classpath change that alters " +
+                        "which classes get dropped can never be served a stale cached part");
     }
 
     // --- cacheKey -------------------------------------------------------------
 
     @Test
     void cacheKey_isContentBased_notPathBased() throws Exception {
-        byte[] fp = PackCache.configFingerprint(-1, false, Collections.emptyMap(), Collections.emptyMap(), Collections.emptyMap());
+        byte[] fp = PackCache.configFingerprint(-1, false, Collections.emptyMap(), Collections.emptyMap(), Collections.emptyMap(), Collections.emptySet());
         File fileA = writeFile("a.jar", "identical content");
         File fileB = writeFile("subdir/b.jar", "identical content");
         assertEquals(PackCache.cacheKey(fp, fileA), PackCache.cacheKey(fp, fileB),
@@ -79,8 +84,8 @@ class PackCacheTest {
     @Test
     void cacheKey_changesWithSourceContentAndWithConfig() throws Exception {
         File file = writeFile("dep.jar", "v1 content");
-        byte[] fp1 = PackCache.configFingerprint(-1, false, Collections.emptyMap(), Collections.emptyMap(), Collections.emptyMap());
-        byte[] fp2 = PackCache.configFingerprint(9, false, Collections.emptyMap(), Collections.emptyMap(), Collections.emptyMap());
+        byte[] fp1 = PackCache.configFingerprint(-1, false, Collections.emptyMap(), Collections.emptyMap(), Collections.emptyMap(), Collections.emptySet());
+        byte[] fp2 = PackCache.configFingerprint(9, false, Collections.emptyMap(), Collections.emptyMap(), Collections.emptyMap(), Collections.emptySet());
         String keyBase = PackCache.cacheKey(fp1, file);
 
         assertNotEquals(keyBase, PackCache.cacheKey(fp2, file), "different config -> different key, same file");

@@ -16,6 +16,14 @@ dependencies {
     implementation 'org.ow2.asm:asm:9.7.1'
     implementation 'org.ow2.asm:asm-commons:9.7.1'
 
+    // minimize()'s reachability analysis (Minimizer) -- the same library Shadow
+    // itself uses for its own minimize() feature, rather than hand-rolling an
+    // ASM-based class-reference scanner (constant pool + descriptors +
+    // signatures + annotations + invokedynamic bootstrap args all need
+    // covering; a proven library is a much lower correctness risk here than
+    // for relocation's simpler pure rename job).
+    implementation 'org.vafer:jdependency:2.16'
+
     // Log4j2's own PluginCache/PluginEntry classes drive the Log4j2Plugins.dat
     // plugin-cache merge (Log4j2PluginCacheMerger) -- reused directly (this is
     // the plugin's own build-time dependency, never shipped into a consuming

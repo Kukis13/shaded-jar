@@ -36,7 +36,7 @@ import java.util.regex.Pattern;
  * ShadedJarExtension}), so e.g. a public API type or an annotation meant to be
  * found by its original name can be carved out of an otherwise-relocated
  * package. Patterns are deliberately a small subset of Shadow/Ant-style globs,
- * not the full syntax — see {@link #matchesPattern}. A name that a rule's
+ * not the full syntax — see {@link NamePatterns}. A name that a rule's
  * prefix matches but whose filter rejects falls through to the next
  * (shorter-prefix) rule instead of being left unrelocated outright, so an
  * exclude can "un-relocate" a subpackage nested inside a broader rule.
@@ -79,33 +79,14 @@ final class Relocator {
         /** Whether this rule (whose prefix already matches {@code dotName}) actually applies to it. */
         boolean isEligible(String dotName) {
             for (String pattern : excludes) {
-                if (matchesPattern(pattern, dotName)) return false;
+                if (NamePatterns.matches(pattern, dotName)) return false;
             }
             if (includes.isEmpty()) return true;
             for (String pattern : includes) {
-                if (matchesPattern(pattern, dotName)) return true;
+                if (NamePatterns.matches(pattern, dotName)) return true;
             }
             return false;
         }
-    }
-
-    /**
-     * Deliberately not a full Ant/Shadow-style glob: only two forms are
-     * recognized. {@code "a.b.C"} (no wildcard) matches that exact dotted name.
-     * {@code "a.b.**"} matches {@code "a.b"} itself and everything nested under
-     * it ({@code "a.b.C"}, {@code "a.b.c.D"}, ...) — the same prefix semantics
-     * relocation rules themselves use. There is no mid-segment {@code *}
-     * wildcard and no support for multiple {@code **} in one pattern; those
-     * would need real glob-to-regex compilation for comparatively little
-     * real-world benefit over these two forms.
-     */
-    private static boolean matchesPattern(String pattern, String dotName) {
-        if (pattern.equals("**")) return true;
-        if (pattern.endsWith(".**")) {
-            String prefix = pattern.substring(0, pattern.length() - 3);
-            return dotName.equals(prefix) || dotName.startsWith(prefix + ".");
-        }
-        return dotName.equals(pattern);
     }
 
     private final List<Rule> rules;
@@ -118,7 +99,7 @@ final class Relocator {
     /**
      * @param relocationIncludes optional, keyed by the same {@code from} prefix as
      *     {@code relocations}; value is a comma-separated pattern list (see
-     *     {@link #matchesPattern}). A prefix with no entry here means "no include
+     *     {@link NamePatterns}). A prefix with no entry here means "no include
      *     filter" — everything under the prefix is eligible, the original behavior.
      * @param relocationExcludes same shape as {@code relocationIncludes}; excludes
      *     always win over includes.
