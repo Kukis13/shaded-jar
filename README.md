@@ -9,8 +9,9 @@ than existing tooling, by doing the two CPU-heavy stages — DEFLATE compression
 and ASM package relocation — **in parallel** on Gradle's worker pool, where
 `Jar`/Shadow run them single-threaded.
 
-- Plugin id: `com.ljarocki.shaded-jar`
-- Coordinates: `com.ljarocki:shaded-jar-plugin`
+- Plugin id: `com.ljarocki.shaded-jar` (apply via the `plugins {}` block —
+  resolved from the [Gradle Plugin Portal](https://plugins.gradle.org),
+  not a Maven Central artifact)
 
 Fat vs shaded is just configuration: **no `relocate(...)` rules → fat JAR; one or
 more → shaded JAR.** There is no separate flag.

@@ -1,9 +1,11 @@
 plugins {
     id 'java-gradle-plugin'
+    id 'maven-publish'
+    id 'com.gradle.plugin-publish' version '2.1.1'
 }
 
 group = 'com.ljarocki'
-version = '0.1.0'
+version = '1.0.0'
 
 repositories {
     mavenCentral()
@@ -36,12 +38,21 @@ tasks.named('test') {
 }
 
 gradlePlugin {
+    website = 'https://github.com/Kukis13/shaded-jar'
+    vcsUrl = 'https://github.com/Kukis13/shaded-jar.git'
     plugins {
         shadedJar {
             id = 'com.ljarocki.shaded-jar'
             implementationClass = 'com.ljarocki.shadedjar.ShadedJarPlugin'
             displayName = 'shaded-jar'
             description = 'Fast, parallel fat/shaded JAR assembly for Gradle'
+            tags.set(['shading', 'fat-jar', 'uber-jar', 'relocation', 'parallel', 'performance'])
+
+            compatibility(it) {
+                features {
+                    configurationCache = true
+                }
+            }
         }
     }
 }
