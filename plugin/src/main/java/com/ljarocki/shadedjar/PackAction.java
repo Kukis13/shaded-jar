@@ -44,7 +44,8 @@ public abstract class PackAction implements WorkAction<PackParams> {
             cacheDir = p.getPackCacheDir().getAsFile().get();
             try {
                 byte[] fingerprint = PackCache.configFingerprint(p.getLevel().get(), p.getStore().get(),
-                        p.getRelocations().get(), p.getRelocationIncludes().get(), p.getRelocationExcludes().get());
+                        p.getRelocations().get(), p.getRelocationIncludes().get(), p.getRelocationExcludes().get(),
+                        p.getDropClasses().get());
                 cacheKey = PackCache.cacheKey(fingerprint, source);
                 File cached = PackCache.find(cacheDir, cacheKey);
                 if (cached != null) {
@@ -72,7 +73,8 @@ public abstract class PackAction implements WorkAction<PackParams> {
     private static void pack(PackParams p, File source, File part) {
         SourcePacker packer = new SourcePacker(
                 p.getLevel().get(), p.getStore().get(), p.getRelocations().get(),
-                p.getRelocationIncludes().get(), p.getRelocationExcludes().get());
+                p.getRelocationIncludes().get(), p.getRelocationExcludes().get(),
+                p.getDropClasses().get());
         try {
             packer.pack(source, part);
         } catch (IOException ex) {

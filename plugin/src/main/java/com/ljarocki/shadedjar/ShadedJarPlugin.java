@@ -42,6 +42,8 @@ public class ShadedJarPlugin implements Plugin<Project> {
                     task.getRelocations().convention(ext.getRelocations());
                     task.getRelocationIncludes().convention(ext.getRelocationIncludes());
                     task.getRelocationExcludes().convention(ext.getRelocationExcludes());
+                    task.getMinimize().convention(ext.getMinimize());
+                    task.getMinimizeKeep().convention(ext.getMinimizeKeep());
                     task.getPackCacheDir().set(packCacheDir);
                     task.getArchiveFile().convention(
                             project.getLayout().getBuildDirectory().file(
@@ -57,6 +59,10 @@ public class ShadedJarPlugin implements Plugin<Project> {
                 // Project output first so its classes win duplicate names; deps after.
                 task.getClasspath().from(main.getOutput());
                 task.getClasspath().from(runtime);
+                // Tracked separately too, so minimize()'s reachability pre-pass knows
+                // which of the classpath's files are always-kept roots rather than
+                // dependency jars actually eligible for dropping.
+                task.getProjectOutput().from(main.getOutput());
             });
         });
     }

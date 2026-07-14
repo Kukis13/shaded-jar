@@ -16,6 +16,14 @@ dependencies {
     implementation 'org.ow2.asm:asm:9.7.1'
     implementation 'org.ow2.asm:asm-commons:9.7.1'
 
+    // minimize()'s reachability analysis (Minimizer) -- the same library Shadow
+    // itself uses for its own minimize() feature, rather than hand-rolling an
+    // ASM-based class-reference scanner (constant pool + descriptors +
+    // signatures + annotations + invokedynamic bootstrap args all need
+    // covering; a proven library is a much lower correctness risk here than
+    // for relocation's simpler pure rename job).
+    implementation 'org.vafer:jdependency:2.16'
+
     testImplementation platform('org.junit:junit-bom:5.10.2')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'

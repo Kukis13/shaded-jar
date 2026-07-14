@@ -3,6 +3,7 @@ package com.ljarocki.shadedjar;
 import org.gradle.api.Action;
 import org.gradle.api.provider.MapProperty;
 import org.gradle.api.provider.Property;
+import org.gradle.api.provider.SetProperty;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -44,6 +45,41 @@ public abstract class ShadedJarExtension {
 
     /** Exclude patterns per relocation, same shape as {@link #getRelocationIncludes()}. */
     public abstract MapProperty<String, String> getRelocationExcludes();
+
+    /**
+     * When {@code true}, drops any bundled dependency class the reachability
+     * analysis can't prove is used by the project's own code (see {@link
+     * Minimizer}). Default {@code false} — no class is ever dropped unless
+     * this is turned on.
+     */
+    public abstract Property<Boolean> getMinimize();
+
+    /**
+     * Classes never dropped by {@code minimize()} regardless of reachability
+     * (see {@link MinimizeSpec#keep}); exact dotted name or a {@code .**}
+     * prefix wildcard, same pattern language as relocation's include/exclude.
+     */
+    public abstract SetProperty<String> getMinimizeKeep();
+
+    /** DSL sugar: {@code minimize()} turns on dead-class stripping with no keep exceptions. */
+    public void minimize() {
+        getMinimize().set(true);
+    }
+
+    /**
+     * DSL sugar with a scoping block: {@code minimize { keep '...' }}. See
+     * {@link MinimizeSpec}.
+     */
+    public void minimize(Action<? super MinimizeSpec> configure) {
+        getMinimize().set(true);
+        List<String> keep = new ArrayList<>();
+        configure.execute(new MinimizeSpec() {
+            @Override public void keep(String... patterns) {
+                Collections.addAll(keep, patterns);
+            }
+        });
+        getMinimizeKeep().addAll(keep);
+    }
 
     /** DSL sugar: {@code relocate 'com.google.common', 'shaded.guava'}. */
     public void relocate(String pattern, String destination) {
