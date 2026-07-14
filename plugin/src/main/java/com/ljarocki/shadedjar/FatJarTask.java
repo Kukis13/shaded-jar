@@ -6,6 +6,7 @@ import org.gradle.api.file.DirectoryProperty;
 import org.gradle.api.file.RegularFileProperty;
 import org.gradle.api.provider.MapProperty;
 import org.gradle.api.provider.Property;
+import org.gradle.api.provider.SetProperty;
 import org.gradle.api.tasks.CacheableTask;
 import org.gradle.api.tasks.Classpath;
 import org.gradle.api.tasks.Input;
@@ -115,6 +116,30 @@ public abstract class FatJarTask extends DefaultTask {
     public abstract MapProperty<String, String> getRelocationExcludes();
 
     /**
+     * When {@code true}, drops any bundled dependency class {@link Minimizer}'s
+     * reachability analysis can't prove is used by the project's own code.
+     */
+    @Input
+    @Optional
+    public abstract Property<Boolean> getMinimize();
+
+    /** Classes {@code minimize()} never drops regardless of reachability; see {@link MinimizeSpec#keep}. */
+    @Input
+    @Optional
+    public abstract SetProperty<String> getMinimizeKeep();
+
+    /**
+     * The project's own compiled output (classes/resource directories) — a
+     * subset of {@link #getClasspath()}, tracked separately so {@link
+     * Minimizer} knows which reachability roots to always keep, as opposed to
+     * the dependency jars that are actually eligible for dropping. Not used
+     * for packing itself (that still iterates {@link #getClasspath()} in
+     * full); only for the minimize pre-pass.
+     */
+    @Classpath
+    public abstract ConfigurableFileCollection getProjectOutput();
+
+    /**
      * Persistent cross-build cache directory for packed sources (see {@link
      * PackCache}); set by {@code ShadedJarPlugin} to a fixed location under
      * Gradle's user home. {@code @Internal}, not {@code @InputDirectory}/
@@ -153,6 +178,12 @@ public abstract class FatJarTask extends DefaultTask {
             if (f.exists()) sources.add(f);
         }
 
+        // minimize(): a sequential pre-pass over the whole classpath at once
+        // (Minimizer needs the full picture to know what's reachable), before
+        // the parallel packing phase below. No-op (empty set, no cost beyond
+        // the isEmpty() check) unless minimize() is actually turned on.
+        final Set<String> dropClasses = computeDropClasses(sources);
+
         File outFile = getArchiveFile().getAsFile().get();
         File partsDir = new File(getTemporaryDir(), "parts");
         deleteRecursively(partsDir);
@@ -182,6 +213,7 @@ public abstract class FatJarTask extends DefaultTask {
                 p.getRelocations().set(relocations);
                 p.getRelocationIncludes().set(relocationIncludes);
                 p.getRelocationExcludes().set(relocationExcludes);
+                p.getDropClasses().set(dropClasses);
                 if (cacheDir != null) {
                     p.getPackCacheDir().set(cacheDir);
                 }
@@ -202,6 +234,28 @@ public abstract class FatJarTask extends DefaultTask {
                         + "pack=%.0fms assemble=%.0fms TOTAL=%.0fms  (pack-cache: %d hit, %d miss)",
                 sources.size(), a.entryCount, a.archiveSize / 1048576.0, a.dropped,
                 (tPack - t0) / 1e6, (tEnd - tPack) / 1e6, (tEnd - t0) / 1e6, cacheHits, cacheMisses));
+    }
+
+    /**
+     * {@code minimize()}'s drop set (see {@link Minimizer}), or empty when it's
+     * off. Splits {@code sources} into the project's own output (always fully
+     * kept — see {@link #getProjectOutput()}) and everything else (the
+     * dependency jars actually eligible for dropping).
+     */
+    private Set<String> computeDropClasses(List<File> sources) throws IOException {
+        if (!getMinimize().getOrElse(false)) return Collections.emptySet();
+
+        List<File> projectOutputs = new ArrayList<>();
+        for (File f : getProjectOutput().getFiles()) {
+            if (f.exists()) projectOutputs.add(f);
+        }
+        Set<File> projectOutputSet = new HashSet<>(projectOutputs);
+        List<File> dependencySources = new ArrayList<>();
+        for (File f : sources) {
+            if (!projectOutputSet.contains(f)) dependencySources.add(f);
+        }
+        return Minimizer.computeDropClasses(
+                projectOutputs, dependencySources, getMinimizeKeep().getOrElse(Collections.emptySet()));
     }
 
     private static final class Assembly {

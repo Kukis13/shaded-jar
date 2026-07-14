@@ -17,6 +17,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -51,15 +52,24 @@ final class PackCache {
     /** Default total cache size cap before {@link #evictIfNeeded} starts pruning the least-recently-used entries. */
     static final long DEFAULT_MAX_BYTES = 1L << 30; // 1 GiB
 
-    /** Canonical, order-independent fingerprint of every packing parameter that affects a source's output bytes. */
+    /**
+     * Canonical, order-independent fingerprint of every packing parameter that
+     * affects a source's output bytes — including {@code dropClasses} (see
+     * {@code Minimizer}): a source's own bytes and every other parameter can be
+     * unchanged while a classpath change *elsewhere* alters which of its classes
+     * {@code minimize()} would drop, so that decision must be part of the key
+     * too, or a cache hit could silently serve a stale, wrongly-minimized part.
+     */
     static byte[] configFingerprint(int level, boolean store, Map<String, String> relocations,
-                                    Map<String, String> relocationIncludes, Map<String, String> relocationExcludes) {
+                                    Map<String, String> relocationIncludes, Map<String, String> relocationExcludes,
+                                    Set<String> dropClasses) {
         StringBuilder sb = new StringBuilder();
         sb.append("level=").append(level).append(';');
         sb.append("store=").append(store).append(';');
         appendSortedMap(sb, "relocations", relocations);
         appendSortedMap(sb, "includes", relocationIncludes);
         appendSortedMap(sb, "excludes", relocationExcludes);
+        appendSortedSet(sb, "dropClasses", dropClasses);
         return sb.toString().getBytes(StandardCharsets.UTF_8);
     }
 
@@ -69,6 +79,16 @@ final class PackCache {
         Collections.sort(keys);
         for (String k : keys) {
             sb.append(k).append("->").append(map.get(k)).append(',');
+        }
+        sb.append(';');
+    }
+
+    private static void appendSortedSet(StringBuilder sb, String label, Set<String> set) {
+        sb.append(label).append('=');
+        List<String> sorted = new ArrayList<>(set);
+        Collections.sort(sorted);
+        for (String s : sorted) {
+            sb.append(s).append(',');
         }
         sb.append(';');
     }

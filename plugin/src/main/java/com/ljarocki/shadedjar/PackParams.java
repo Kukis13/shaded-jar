@@ -4,6 +4,7 @@ import org.gradle.api.file.DirectoryProperty;
 import org.gradle.api.file.RegularFileProperty;
 import org.gradle.api.provider.MapProperty;
 import org.gradle.api.provider.Property;
+import org.gradle.api.provider.SetProperty;
 import org.gradle.workers.WorkParameters;
 
 /** Parameters for packing one source (a dependency jar or a classes directory). */
@@ -28,6 +29,13 @@ public interface PackParams extends WorkParameters {
 
     /** Exclude patterns per relocation, same shape as {@link #getRelocationIncludes()}. */
     MapProperty<String, String> getRelocationExcludes();
+
+    /**
+     * {@code minimize()}'s drop set (see {@link Minimizer}): internal (slash-form)
+     * names of classes to omit entirely, computed once by {@code FatJarTask}
+     * before the parallel packing phase. Empty when minimize is off.
+     */
+    SetProperty<String> getDropClasses();
 
     /** Persistent cross-build cache directory (see {@link PackCache}); optional — absent disables caching for this source. */
     DirectoryProperty getPackCacheDir();
